@@ -1,0 +1,15 @@
+screening:
+  indicators:
+    macd:
+      short_period: 6
+      long_period: 13
+      signal_period: 5
+    stochastic:
+      k_period: 9
+      smooth_k: 3
+      d_period: 3
+      oversold_threshold: 20
+  proximity:
+    enable_macd_kd: true
+    window_days: 1
+
