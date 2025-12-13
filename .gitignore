@@ -15,7 +15,10 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+# dist/ は起動スクリプトを含むため、リポジトリに含める
+# dist/data/ と dist/nul は除外
+dist/data/
+dist/nul
 downloads/
 eggs/
 .eggs/
@@ -63,4 +66,48 @@ nul
 con
 prn
 aux
+
+# 出力ディレクトリ
+analysis_output/
+backtest_output/
+web/output/
+web/__pycache__/
+
+# ビルド成果物
+build/
+*.pkg
+
+# テスト・デバッグ出力ファイル
+test_output.txt
+test_output_final.txt
+test_result.txt
+debug_output.txt
+test_output.log
+
+# ドキュメントファイル（開発過程のメモ等）
+*.md
+!README.md
+!README_VENV.md
+docs/
+
+# 開発・メンテナンス用スクリプト（アプリ起動には不要）
+check_*.py
+fetch_*.py
+cleanup_*.py
+fix_*.py
+import_*.py
+set_*.py
+test_*.py
+compare_*.py
+run_strategy_comparison.py
+run_web_ui.py
+tests/
+
+# バッチ処理スクリプト（自動実行用、アプリ内スケジューラーで代替可能）
+run_daily_batch.bat
+run_daily_batch.ps1
+setup_daily_batch_task.ps1
+
+# その他の開発用スクリプト
+rename_docs.sh
 
