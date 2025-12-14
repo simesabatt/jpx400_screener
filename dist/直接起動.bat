@@ -60,33 +60,15 @@ REM Check pdfplumber (for JPX400 list fetching)
 python -c "import pdfplumber" >nul 2>&1
 set PDFPLUMBER_INSTALLED=%ERRORLEVEL%
 
-REM If any required package is missing, offer to install
-if !PANDAS_INSTALLED! NEQ 0 (
-    echo [WARNING] Required packages are not installed
-    echo.
-    echo Would you like to install required packages now? (Y/N)
-    set /p INSTALL_CHOICE=
-    if /i "!INSTALL_CHOICE!"=="Y" (
+REM Check if all required packages are installed
+if "!PANDAS_INSTALLED!"=="0" (
+    if "!PDFPLUMBER_INSTALLED!"=="0" (
+        REM All required packages are installed - skip prompt and proceed directly
+        echo [INFO] All required packages are installed
         echo.
-        echo Installing required packages...
-        set PYTHONIOENCODING=utf-8
-        python -m pip install -r requirements.txt --no-cache-dir
-        if !ERRORLEVEL! NEQ 0 (
-            echo [ERROR] Failed to install packages
-            pause
-            exit /b 1
-        )
-        echo [INFO] Packages installed successfully
-        echo.
+        goto :continue
     ) else (
-        echo [INFO] Skipping package installation
-        echo [NOTE] You can install packages later with: pip install -r requirements.txt
-        echo.
-    )
-) else (
-    REM pandas is installed, check pdfplumber
-    echo [DEBUG] pandas is installed, checking pdfplumber...
-    if !PDFPLUMBER_INSTALLED! NEQ 0 (
+        REM pdfplumber is missing
         echo [WARNING] Some required packages are missing (pdfplumber)
         echo.
         echo Would you like to install missing packages now? (Y/N)
@@ -108,9 +90,28 @@ if !PANDAS_INSTALLED! NEQ 0 (
             echo [NOTE] You can install packages later with: pip install -r requirements.txt
             echo.
         )
+    )
+) else (
+    REM pandas is missing
+    echo [WARNING] Required packages are not installed
+    echo.
+    echo Would you like to install required packages now? (Y/N)
+    set /p INSTALL_CHOICE=
+    if /i "!INSTALL_CHOICE!"=="Y" (
+        echo.
+        echo Installing required packages...
+        set PYTHONIOENCODING=utf-8
+        python -m pip install -r requirements.txt --no-cache-dir
+        if !ERRORLEVEL! NEQ 0 (
+            echo [ERROR] Failed to install packages
+            pause
+            exit /b 1
+        )
+        echo [INFO] Packages installed successfully
+        echo.
     ) else (
-        REM All required packages are installed
-        echo [INFO] All required packages are installed
+        echo [INFO] Skipping package installation
+        echo [NOTE] You can install packages later with: pip install -r requirements.txt
         echo.
     )
 )
@@ -118,12 +119,9 @@ goto :continue
 
 :venv_found
 echo [INFO] Using virtual environment
-echo [DEBUG] Python command: %PYTHON_CMD%
-echo [DEBUG] Current directory: %CD%
 echo.
 
 REM Verify Python command works
-echo [DEBUG] Verifying Python command...
 %PYTHON_CMD% --version >nul 2>&1
 if %ERRORLEVEL% NEQ 0 (
     echo [ERROR] Python command failed: %PYTHON_CMD%
@@ -131,40 +129,26 @@ if %ERRORLEVEL% NEQ 0 (
     pause
     exit /b 1
 )
-echo [DEBUG] Python command verified successfully
 echo.
 
 REM Check if required packages are installed in venv
 REM Check pandas (main package)
-echo [DEBUG] Checking pandas...
 %PYTHON_CMD% -c "import pandas" >nul 2>&1
 set PANDAS_INSTALLED=%ERRORLEVEL%
-echo [DEBUG] pandas check result: !PANDAS_INSTALLED!
 
 REM Check pdfplumber (for JPX400 list fetching)
-echo [DEBUG] Checking pdfplumber...
 %PYTHON_CMD% -c "import pdfplumber" >nul 2>&1
 set PDFPLUMBER_INSTALLED=%ERRORLEVEL%
-echo [DEBUG] pdfplumber check result: !PDFPLUMBER_INSTALLED!
-echo.
-echo [DEBUG] Evaluating conditions: PANDAS_INSTALLED=!PANDAS_INSTALLED!, PDFPLUMBER_INSTALLED=!PDFPLUMBER_INSTALLED!
-echo.
-echo [DEBUG] About to check if PANDAS_INSTALLED NEQ 0...
-echo [DEBUG] PANDAS_INSTALLED value as string: "!PANDAS_INSTALLED!"
-echo [DEBUG] Testing condition...
-set TEST_VAR=!PANDAS_INSTALLED!
-echo [DEBUG] TEST_VAR=!TEST_VAR!
-if "!TEST_VAR!"=="0" (
-    echo [DEBUG] Condition matched: PANDAS_INSTALLED is 0
-    echo [DEBUG] PANDAS_INSTALLED is 0, pandas is installed
-    echo [DEBUG] Checking pdfplumber: PDFPLUMBER_INSTALLED=!PDFPLUMBER_INSTALLED!
+
+REM Check if all required packages are installed
+if "!PANDAS_INSTALLED!"=="0" (
     if "!PDFPLUMBER_INSTALLED!"=="0" (
-        echo [DEBUG] All packages are installed
+        REM All required packages are installed - skip prompt and proceed directly
         echo [INFO] All required packages are installed
-        echo [DEBUG] Proceeding to launch...
         echo.
+        goto :continue
     ) else (
-        echo [DEBUG] Entering pdfplumber missing branch
+        REM pdfplumber is missing
         echo [WARNING] Some required packages are missing in virtual environment (pdfplumber)
         echo.
         echo Would you like to install missing packages now? (Y/N)
@@ -188,7 +172,7 @@ if "!TEST_VAR!"=="0" (
         )
     )
 ) else (
-    echo [DEBUG] PANDAS_INSTALLED is not 0, entering pandas missing branch
+    REM pandas is missing
     echo [WARNING] Required packages are not installed in virtual environment
     echo.
     echo Would you like to install required packages now? (Y/N)
@@ -212,31 +196,23 @@ if "!TEST_VAR!"=="0" (
     )
 )
 
-echo [DEBUG] Reaching goto :continue
 goto :continue
 
 :continue
 
 echo [INFO] Launching control panel...
-echo [DEBUG] Current directory: %CD%
-echo [DEBUG] Python command: %PYTHON_CMD%
-echo [DEBUG] Checking if run_control_panel.py exists...
-if exist "run_control_panel.py" (
-    echo [DEBUG] run_control_panel.py found
-) else (
+echo.
+
+REM Check if run_control_panel.py exists
+if not exist "run_control_panel.py" (
     echo [ERROR] run_control_panel.py not found in current directory
     pause
     exit /b 1
 )
-echo.
 
 REM Launch control panel
-echo [DEBUG] Executing: %PYTHON_CMD% run_control_panel.py
 %PYTHON_CMD% run_control_panel.py 2>&1
 set LAUNCH_ERROR=%ERRORLEVEL%
-if %LAUNCH_ERROR% NEQ 0 (
-    echo [DEBUG] Application exited with code: %LAUNCH_ERROR%
-)
 
 REM Pause on error
 if %LAUNCH_ERROR% NEQ 0 (
