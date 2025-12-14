@@ -70,8 +70,14 @@ class JPX400Fetcher:
                 print("[JPX400Fetcher] PDFから銘柄コードを抽出できませんでした")
                 return None
         
+        except requests.exceptions.RequestException as e:
+            print(f"[JPX400Fetcher] PDFダウンロードエラー: {e}")
+            print(f"  URL: {pdf_url}")
+            return None
         except Exception as e:
             print(f"[JPX400Fetcher] PDF取得エラー: {e}")
+            import traceback
+            traceback.print_exc()
             return None
     
     def _parse_pdf(self, pdf_path: str) -> List[str]:
@@ -156,11 +162,12 @@ class JPX400Fetcher:
                     return symbols
                 
                 except ImportError:
-                    print("[JPX400Fetcher] PDF解析ライブラリがインストールされていません")
-                    print("  以下のいずれかをインストールしてください:")
-                    print("    pip install pdfplumber")
-                    print("    または")
-                    print("    pip install PyPDF2")
+                    error_msg = "[JPX400Fetcher] PDF解析ライブラリがインストールされていません\n"
+                    error_msg += "  以下のいずれかをインストールしてください:\n"
+                    error_msg += "    pip install pdfplumber  （推奨）\n"
+                    error_msg += "    または\n"
+                    error_msg += "    pip install PyPDF2"
+                    print(error_msg)
                     return []
         
         except Exception as e:
@@ -174,6 +181,18 @@ class JPX400Fetcher:
         Returns:
             List[str]: 銘柄コードのリスト、またはNone（取得失敗時）
         """
+        # PDF解析ライブラリがインストールされているか確認
+        try:
+            import pdfplumber
+        except ImportError:
+            try:
+                import PyPDF2
+            except ImportError:
+                print("[JPX400Fetcher] PDF解析ライブラリがインストールされていません")
+                print("  以下のコマンドでインストールしてください:")
+                print("    pip install pdfplumber")
+                return None
+        
         # まずPDFから取得を試みる
         symbols = self.fetch_from_jpx_pdf_url()
         
@@ -182,6 +201,8 @@ class JPX400Fetcher:
         
         # PDFから取得できなかった場合、他の方法を試す
         print("[JPX400Fetcher] PDFからの取得に失敗したため、他の方法を試します")
+        if symbols:
+            print(f"[JPX400Fetcher] 取得できた銘柄数: {len(symbols)}件（300件未満のため失敗と判断）")
         return None
     
     def parse_csv_file(self, csv_file: str) -> List[str]:

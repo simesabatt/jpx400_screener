@@ -29,5 +29,8 @@ flask>=2.3.0
 # スケジューラー（自動実行用）
 apscheduler>=3.10.0
 
+# PDF解析（JPX400銘柄リスト取得用）
+pdfplumber>=0.10.0
+
 # EXE化ツール（オプション）
 pyinstaller>=5.13.0

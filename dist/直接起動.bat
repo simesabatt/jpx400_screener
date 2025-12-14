@@ -47,9 +47,17 @@ if %ERRORLEVEL% NEQ 0 (
     exit /b 1
 )
 
-REM Check if pandas is installed
+REM Check if required packages are installed
+REM Check pandas (main package)
 python -c "import pandas" >nul 2>&1
-if %ERRORLEVEL% NEQ 0 (
+set PANDAS_INSTALLED=%ERRORLEVEL%
+
+REM Check pdfplumber (for JPX400 list fetching)
+python -c "import pdfplumber" >nul 2>&1
+set PDFPLUMBER_INSTALLED=%ERRORLEVEL%
+
+REM If any required package is missing, offer to install
+if %PANDAS_INSTALLED% NEQ 0 (
     echo [WARNING] Required packages are not installed
     echo.
     echo Would you like to install required packages now? (Y/N)
@@ -70,11 +78,87 @@ if %ERRORLEVEL% NEQ 0 (
         echo [NOTE] You can install packages later with: pip install -r requirements.txt
         echo.
     )
+) else if %PDFPLUMBER_INSTALLED% NEQ 0 (
+    echo [WARNING] Some required packages are missing (pdfplumber)
+    echo.
+    echo Would you like to install missing packages now? (Y/N)
+    set /p INSTALL_CHOICE=
+    if /i "!INSTALL_CHOICE!"=="Y" (
+        echo.
+        echo Installing missing packages...
+        python -m pip install -r requirements.txt
+        if %ERRORLEVEL% NEQ 0 (
+            echo [ERROR] Failed to install packages
+            pause
+            exit /b 1
+        )
+        echo [INFO] Packages installed successfully
+        echo.
+    ) else (
+        echo [INFO] Skipping package installation
+        echo [NOTE] You can install packages later with: pip install -r requirements.txt
+        echo.
+    )
 )
 goto :continue
 
 :venv_found
 echo [INFO] Using virtual environment
+
+REM Check if required packages are installed in venv
+REM Check pandas (main package)
+%PYTHON_CMD% -c "import pandas" >nul 2>&1
+set PANDAS_INSTALLED=%ERRORLEVEL%
+
+REM Check pdfplumber (for JPX400 list fetching)
+%PYTHON_CMD% -c "import pdfplumber" >nul 2>&1
+set PDFPLUMBER_INSTALLED=%ERRORLEVEL%
+
+REM If any required package is missing, offer to install
+if %PANDAS_INSTALLED% NEQ 0 (
+    echo [WARNING] Required packages are not installed in virtual environment
+    echo.
+    echo Would you like to install required packages now? (Y/N)
+    set /p INSTALL_CHOICE=
+    if /i "!INSTALL_CHOICE!"=="Y" (
+        echo.
+        echo Installing required packages...
+        %PYTHON_CMD% -m pip install -r requirements.txt
+        if %ERRORLEVEL% NEQ 0 (
+            echo [ERROR] Failed to install packages
+            pause
+            exit /b 1
+        )
+        echo [INFO] Packages installed successfully
+        echo.
+    ) else (
+        echo [INFO] Skipping package installation
+        echo [NOTE] You can install packages later with: pip install -r requirements.txt
+        echo.
+    )
+) else if %PDFPLUMBER_INSTALLED% NEQ 0 (
+    echo [WARNING] Some required packages are missing in virtual environment (pdfplumber)
+    echo.
+    echo Would you like to install missing packages now? (Y/N)
+    set /p INSTALL_CHOICE=
+    if /i "!INSTALL_CHOICE!"=="Y" (
+        echo.
+        echo Installing missing packages...
+        %PYTHON_CMD% -m pip install -r requirements.txt
+        if %ERRORLEVEL% NEQ 0 (
+            echo [ERROR] Failed to install packages
+            pause
+            exit /b 1
+        )
+        echo [INFO] Packages installed successfully
+        echo.
+    ) else (
+        echo [INFO] Skipping package installation
+        echo [NOTE] You can install packages later with: pip install -r requirements.txt
+        echo.
+    )
+)
+
 goto :continue
 
 :continue

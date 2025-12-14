@@ -360,11 +360,26 @@ class DataManagementTab:
                     symbols = fetcher.fetch_from_jpx_website()
                     
                     if not symbols or len(symbols) < 300:
+                        # エラーメッセージを詳細に表示
+                        error_msg = f"JPX公式サイトからの取得に失敗しました。\n"
+                        error_msg += f"（取得できた銘柄数: {len(symbols) if symbols else 0}件）\n\n"
+                        
+                        # PDF解析ライブラリがインストールされているか確認
+                        try:
+                            import pdfplumber
+                        except ImportError:
+                            try:
+                                import PyPDF2
+                            except ImportError:
+                                error_msg += "【原因】PDF解析ライブラリがインストールされていません。\n"
+                                error_msg += "以下のコマンドでインストールしてください:\n"
+                                error_msg += "  pip install pdfplumber\n\n"
+                        
+                        error_msg += "CSVファイルから読み込みますか？"
+                        
                         retry_choice = messagebox.askyesno(
                             "取得失敗",
-                            f"JPX公式サイトからの取得に失敗しました。\n"
-                            f"（取得できた銘柄数: {len(symbols) if symbols else 0}件）\n\n"
-                            f"CSVファイルから読み込みますか？"
+                            error_msg
                         )
                         
                         if retry_choice:
