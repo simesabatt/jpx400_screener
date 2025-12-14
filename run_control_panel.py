@@ -21,6 +21,7 @@ See LICENSE file for details.
 
 import os
 import sys
+from pathlib import Path
 
 # プロジェクトルートをパスに追加
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -32,6 +33,12 @@ DB_PATH = os.environ.get("TICK_DB_PATH", "data/tick_data.db")
 
 
 def main():
+    # データディレクトリを作成（データベースファイルの自動作成を確実にするため）
+    # exist_ok=Trueにより、既に存在する場合は何もしない（既存データを保護）
+    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    
+    # ControlPanelの初期化時に、既存のDBファイルがあればそれを使用し、
+    # なければ新規作成される（_ensure_database()メソッド内で処理）
     app = ControlPanel(db_path=DB_PATH)
     app.mainloop()
 

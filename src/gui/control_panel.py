@@ -27,6 +27,9 @@ class ControlPanel(tk.Tk):
 
         self.db_path = db_path  # DBパスを保持
 
+        # データベースを初期化（テーブルを作成）
+        self._ensure_database()
+
         self.title("JPX400スクリーニング コントロールパネル")
         self.geometry("1000x700")  # サイズを大きく
 
@@ -60,6 +63,30 @@ class ControlPanel(tk.Tk):
         # ウィンドウをクリックしたときに前面に表示されるようにする
         self.bind('<FocusIn>', lambda e: self.lift())
         self.bind('<Button-1>', lambda e: self.lift())
+
+    def _ensure_database(self):
+        """
+        データベースとテーブルを確実に作成する
+        
+        注意：
+        - 既存のDBファイルがあればそれを使用し、なければ新規作成される
+        - 既存のテーブルがあれば何もしない（CREATE TABLE IF NOT EXISTS）
+        - 2回目以降の起動でも、常に同じDBファイル（self.db_path）を使用する
+        """
+        try:
+            # OHLCVDataManagerとSymbolNameManagerを初期化することで、
+            # データベースファイルとテーブルが自動的に作成される
+            # 既存のDBファイルがあればそれを使用し、なければ新規作成される
+            from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+            from src.data_collector.symbol_name_manager import SymbolNameManager
+            
+            # データベースを初期化（テーブルを作成）
+            # 既存のテーブルがあれば何もしない（CREATE TABLE IF NOT EXISTS）
+            OHLCVDataManager(self.db_path)
+            SymbolNameManager(self.db_path)
+        except Exception as e:
+            # エラーが発生してもアプリケーションは起動を続ける
+            print(f"[WARN] データベース初期化時にエラーが発生しました: {e}")
 
     # ================= UI 構築 =================
     def _build_ui(self):
