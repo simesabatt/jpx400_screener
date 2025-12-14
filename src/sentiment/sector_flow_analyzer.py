@@ -277,4 +277,139 @@ class SectorFlowAnalyzer:
         })
         
         return result_df
+    
+    def get_sector_stock_counts(self) -> pd.DataFrame:
+        """
+        セクターごとの登録銘柄数を取得
+        
+        Returns:
+            pd.DataFrame: セクター名と銘柄数のデータ
+                列: 'sector'（セクター名）, 'count'（銘柄数）
+        """
+        # JPX400銘柄リストを取得
+        symbols = self.jpx400_manager.load_symbols()
+        if not symbols:
+            print("[SectorFlowAnalyzer] JPX400銘柄リストが空です")
+            return pd.DataFrame()
+        
+        # セクター情報を一括取得
+        sectors_dict = self.ohlcv_manager.get_symbol_sectors(symbols)
+        
+        # セクターごとに銘柄数をカウント
+        sector_counts: Dict[str, int] = {}
+        for symbol, sector in sectors_dict.items():
+            if sector:  # セクター情報がある場合のみ
+                sector_counts[sector] = sector_counts.get(sector, 0) + 1
+        
+        if not sector_counts:
+            print("[SectorFlowAnalyzer] セクター情報が見つかりませんでした")
+            return pd.DataFrame()
+        
+        # DataFrameに変換（銘柄数でソート）
+        result_data = [
+            {'sector': sector, 'count': count}
+            for sector, count in sorted(sector_counts.items(), key=lambda x: x[1], reverse=True)
+        ]
+        
+        result_df = pd.DataFrame(result_data)
+        
+        print(f"[SectorFlowAnalyzer] セクター別銘柄数: {len(result_df)}セクター")
+        
+        return result_df
+    
+    def get_sector_industry_stock_counts(self) -> pd.DataFrame:
+        """
+        セクター・業種ごとの登録銘柄数を取得
+        
+        Returns:
+            pd.DataFrame: セクター名、業種名、銘柄数のデータ
+                列: 'sector'（セクター名）, 'industry'（業種名）, 'count'（銘柄数）
+        """
+        # JPX400銘柄リストを取得
+        symbols = self.jpx400_manager.load_symbols()
+        if not symbols:
+            print("[SectorFlowAnalyzer] JPX400銘柄リストが空です")
+            return pd.DataFrame()
+        
+        # セクター情報と業種情報を一括取得
+        sectors_dict = self.ohlcv_manager.get_symbol_sectors(symbols)
+        industries_dict = self.ohlcv_manager.get_symbol_industries(symbols)
+        
+        # セクター・業種ごとに銘柄数をカウント
+        sector_industry_counts: Dict[Tuple[str, str], int] = {}
+        for symbol in symbols:
+            sector = sectors_dict.get(symbol)
+            industry = industries_dict.get(symbol)
+            
+            if sector and industry:  # セクター情報と業種情報がある場合のみ
+                key = (sector, industry)
+                sector_industry_counts[key] = sector_industry_counts.get(key, 0) + 1
+        
+        if not sector_industry_counts:
+            print("[SectorFlowAnalyzer] セクター・業種情報が見つかりませんでした")
+            return pd.DataFrame()
+        
+        # DataFrameに変換（セクター、銘柄数（降順）、業種名でソート）
+        result_data = [
+            {'sector': sector, 'industry': industry, 'count': count}
+            for (sector, industry), count in sorted(
+                sector_industry_counts.items(), 
+                key=lambda x: (x[0][0], -x[1], x[0][1])  # セクター名、銘柄数（降順）、業種名でソート
+            )
+        ]
+        
+        result_df = pd.DataFrame(result_data)
+        
+        print(f"[SectorFlowAnalyzer] セクター・業種別銘柄数: {len(result_df)}件")
+        
+        return result_df
+    
+    def calculate_sector_flow_per_stock(
+        self,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        days: Optional[int] = None
+    ) -> pd.DataFrame:
+        """
+        セクターごとの1銘柄あたりの売買代金を計算
+        
+        Args:
+            start_date: 開始日（Noneの場合はdaysから計算）
+            end_date: 終了日（Noneの場合は今日）
+            days: 過去何日分を取得するか（start_dateがNoneの場合に使用）
+        
+        Returns:
+            pd.DataFrame: 日付をインデックス、セクターを列とする1銘柄あたり売買代金データ
+                列: 各セクター名
+                値: 1銘柄あたりの売買代金（億円単位）
+        """
+        # セクターごとの売買代金を取得
+        flow_df = self.calculate_sector_flow(start_date, end_date, days)
+        
+        if flow_df.empty:
+            return pd.DataFrame()
+        
+        # セクターごとの銘柄数を取得
+        sector_counts_df = self.get_sector_stock_counts()
+        
+        if sector_counts_df.empty:
+            print("[SectorFlowAnalyzer] セクター別銘柄数が取得できませんでした")
+            return pd.DataFrame()
+        
+        # セクター名をキーとする銘柄数の辞書を作成
+        sector_counts_dict = dict(zip(sector_counts_df['sector'], sector_counts_df['count']))
+        
+        # 1銘柄あたりの売買代金を計算
+        result_df = flow_df.copy()
+        
+        for sector in result_df.columns:
+            count = sector_counts_dict.get(sector, 1)  # 銘柄数が取得できない場合は1で割る
+            if count > 0:
+                result_df[sector] = result_df[sector] / count
+            else:
+                result_df[sector] = 0.0
+        
+        print(f"[SectorFlowAnalyzer] 1銘柄あたり売買代金を計算しました")
+        
+        return result_df
 

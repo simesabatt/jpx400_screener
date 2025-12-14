@@ -13,7 +13,7 @@ import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, List, Dict
+from typing import Optional, List, Dict, Tuple
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
@@ -58,6 +58,7 @@ class MarketConditionsTab:
         self.current_flow_df: Optional[pd.DataFrame] = None
         self.current_share_df: Optional[pd.DataFrame] = None
         self.current_change_df: Optional[pd.DataFrame] = None
+        self.current_flow_per_stock_df: Optional[pd.DataFrame] = None
         
         # グラフウィンドウの参照
         self.chart_window = None
@@ -143,6 +144,22 @@ class MarketConditionsTab:
             command=self._on_chart_type_changed
         ).pack(side="left", padx=2)
         
+        ttk.Radiobutton(
+            chart_type_frame,
+            text="1銘柄あたり売買代金",
+            variable=self.chart_type_var,
+            value="flow_per_stock",
+            command=self._on_chart_type_changed
+        ).pack(side="left", padx=2)
+        
+        ttk.Radiobutton(
+            chart_type_frame,
+            text="1銘柄あたり売買代金（移動平均）",
+            variable=self.chart_type_var,
+            value="flow_per_stock_ma",
+            command=self._on_chart_type_changed
+        ).pack(side="left", padx=2)
+        
         # 移動平均期間選択（新しい行に配置）
         ma_frame = ttk.Frame(control_frame)
         ma_frame.pack(fill="x", pady=(0, pad))
@@ -177,33 +194,53 @@ class MarketConditionsTab:
             foreground="gray"
         ).pack(side="left", padx=pad)
         
-        # セクター別銘柄表示フレーム
-        sector_frame = ttk.LabelFrame(control_frame, text="セクター別銘柄一覧", padding=pad)
-        sector_frame.pack(fill="x", pady=pad)
+        # セクター別銘柄数表示フレーム
+        sector_count_frame = ttk.LabelFrame(control_frame, text="セクター別登録銘柄数", padding=pad)
+        sector_count_frame.pack(fill="x", pady=pad)
         
-        sector_select_frame = ttk.Frame(sector_frame)
-        sector_select_frame.pack(fill="x", pady=(0, pad))
-        
-        ttk.Label(sector_select_frame, text="セクター選択:").pack(side="left", padx=pad)
-        
-        self.sector_var = tk.StringVar()
-        self.sector_combo = ttk.Combobox(
-            sector_select_frame,
-            textvariable=self.sector_var,
-            state="readonly",
-            width=30
+        # 説明文を追加
+        info_label = ttk.Label(
+            sector_count_frame,
+            text="※ セクター行をダブルクリックすると、そのセクターの銘柄一覧が表示されます\n※ 業種行をダブルクリックすると、そのセクター・業種の銘柄一覧が表示されます\n※ セクター行をクリックすると、業種が展開/折りたたみされます",
+            font=("", 9),
+            foreground="gray"
         )
-        self.sector_combo.pack(side="left", padx=pad)
+        info_label.pack(fill="x", pady=(0, pad))
         
-        # セクター一覧を読み込む
-        self._load_sector_list()
+        # セクター別銘柄数のTreeview（アコーディオン表示用）
+        count_tree_frame = ttk.Frame(sector_count_frame)
+        count_tree_frame.pack(fill="both", expand=True)
         
-        ttk.Button(
-            sector_select_frame,
-            text="銘柄表示",
-            command=self.on_show_sector_symbols,
-            width=15
-        ).pack(side="left", padx=pad)
+        count_v_scrollbar = ttk.Scrollbar(count_tree_frame, orient="vertical")
+        count_v_scrollbar.pack(side="right", fill="y")
+        
+        count_columns = ("セクター", "業種", "銘柄数")
+        self.sector_count_tree = ttk.Treeview(
+            count_tree_frame,
+            columns=count_columns,
+            show="tree headings",
+            yscrollcommand=count_v_scrollbar.set,
+            height=15,  # セクター全体が表示できるように高さを増やす
+            selectmode="browse"
+        )
+        self.sector_count_tree.pack(side="left", fill="both", expand=True)
+        
+        count_v_scrollbar.config(command=self.sector_count_tree.yview)
+        
+        # 列の設定
+        self.sector_count_tree.column("#0", width=20, stretch=False)  # ツリーアイコン用
+        self.sector_count_tree.column("セクター", width=150, anchor="w")
+        self.sector_count_tree.column("業種", width=200, anchor="w")
+        self.sector_count_tree.column("銘柄数", width=100, anchor="e")
+        
+        for col in count_columns:
+            self.sector_count_tree.heading(col, text=col)
+        
+        # 初期状態では空のメッセージを表示
+        self.sector_count_tree.insert("", "end", values=("分析実行後に表示されます", "", ""))
+        
+        # ダブルクリックイベントを追加（セクター行のみ）
+        self.sector_count_tree.bind("<Double-1>", self._on_sector_count_double_click)
         
         # グラフ表示フレーム
         self.chart_frame = ttk.Frame(self.parent)
@@ -211,37 +248,36 @@ class MarketConditionsTab:
         
         # 初期状態ではグラフを表示しない
         self._show_placeholder()
+        
+        # セクター別銘柄数を自動読み込み
+        self._load_sector_counts_on_init()
     
-    def _load_sector_list(self):
-        """セクター一覧を読み込んでComboboxに設定"""
-        try:
-            from src.data_collector.ohlcv_data_manager import OHLCVDataManager
-            from src.screening.jpx400_manager import JPX400Manager
-            
-            ohlcv_manager = OHLCVDataManager(self.db_path)
-            jpx400_manager = JPX400Manager()
-            
-            # JPX400銘柄リストを取得
-            symbols = jpx400_manager.load_symbols()
-            if not symbols:
-                return
-            
-            # セクター情報を一括取得
-            sectors_dict = ohlcv_manager.get_symbol_sectors(symbols)
-            
-            # セクター一覧を取得（重複を除去してソート）
-            sectors = sorted(set(sectors_dict.values()))
-            
-            # Comboboxに設定
-            self.sector_combo['values'] = sectors
-            
-            # デフォルトで最初のセクターを選択
-            if sectors:
-                self.sector_var.set(sectors[0])
-        except Exception as e:
-            print(f"[ERROR] セクター一覧読み込みエラー: {e}")
-            import traceback
-            traceback.print_exc()
+    def _load_sector_counts_on_init(self):
+        """タブ初期化時にセクター別銘柄数を読み込む"""
+        def load_in_thread():
+            try:
+                from src.sentiment.sector_flow_analyzer import SectorFlowAnalyzer
+                
+                analyzer = SectorFlowAnalyzer(self.db_path)
+                sector_count_df = analyzer.get_sector_stock_counts()
+                
+                # セクター・業種別銘柄数も読み込む
+                sector_industry_count_df = analyzer.get_sector_industry_stock_counts()
+                
+                # セクター別銘柄数をアコーディオン表示
+                if not sector_count_df.empty and not sector_industry_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts_with_industries(
+                        sector_count_df, sector_industry_count_df
+                    ))
+                elif not sector_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts(sector_count_df))
+            except Exception as e:
+                print(f"[ERROR] セクター別銘柄数読み込みエラー: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        thread = threading.Thread(target=load_in_thread, daemon=True)
+        thread.start()
     
     def _show_placeholder(self):
         """プレースホルダーを表示"""
@@ -271,7 +307,7 @@ class MarketConditionsTab:
         
         # 移動平均選択時のみ移動平均期間選択を有効化
         chart_type = self.chart_type_var.get()
-        if chart_type == "moving_average":
+        if chart_type == "moving_average" or chart_type == "flow_per_stock_ma":
             for widget in self.parent.winfo_children():
                 if isinstance(widget, ttk.Frame):
                     for child in widget.winfo_children():
@@ -304,16 +340,33 @@ class MarketConditionsTab:
                 analyzer = SectorFlowAnalyzer(self.db_path)
                 days_value = self.days_var.get()
                 
+                # セクター別銘柄数を取得
+                self.status_var.set("状態: セクター別銘柄数を取得中...")
+                sector_count_df = analyzer.get_sector_stock_counts()
+                
+                # セクター・業種別銘柄数も取得
+                sector_industry_count_df = analyzer.get_sector_industry_stock_counts()
+                
+                # セクター別銘柄数をアコーディオン表示
+                if not sector_count_df.empty and not sector_industry_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts_with_industries(
+                        sector_count_df, sector_industry_count_df
+                    ))
+                elif not sector_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts(sector_count_df))
+                
                 # データを取得
                 if days_value == "all":
                     self.status_var.set("状態: データ取得中...（全期間）")
                     flow_df, change_df = analyzer.calculate_sector_flow_with_change(days=None)
                     share_df = analyzer.calculate_sector_share(days=None)
+                    flow_per_stock_df = analyzer.calculate_sector_flow_per_stock(days=None)
                 else:
                     days = int(days_value)
                     self.status_var.set(f"状態: データ取得中...（{days}日分）")
                     flow_df, change_df = analyzer.calculate_sector_flow_with_change(days=days)
                     share_df = analyzer.calculate_sector_share(days=days)
+                    flow_per_stock_df = analyzer.calculate_sector_flow_per_stock(days=days)
                 
                 if flow_df.empty:
                     self.parent.after(0, lambda: messagebox.showwarning(
@@ -327,6 +380,7 @@ class MarketConditionsTab:
                 self.current_flow_df = flow_df
                 self.current_share_df = share_df
                 self.current_change_df = change_df
+                self.current_flow_per_stock_df = flow_per_stock_df
                 
                 # グラフを表示
                 self.parent.after(0, self._display_chart)
@@ -350,6 +404,77 @@ class MarketConditionsTab:
         
         thread = threading.Thread(target=task, daemon=True)
         thread.start()
+    
+    def _display_sector_counts(self, sector_count_df: pd.DataFrame):
+        """セクター別銘柄数をTreeviewに表示（業種情報なしの場合）"""
+        # 既存のデータをクリア
+        for item in self.sector_count_tree.get_children():
+            self.sector_count_tree.delete(item)
+        
+        # データを挿入
+        for _, row in sector_count_df.iterrows():
+            sector = row['sector']
+            count = int(row['count'])
+            self.sector_count_tree.insert("", "end", values=(sector, "", f"{count:,}"))
+    
+    def _display_sector_counts_with_industries(
+        self, 
+        sector_count_df: pd.DataFrame, 
+        sector_industry_count_df: pd.DataFrame
+    ):
+        """セクター別銘柄数をアコーディオン表示（業種を含む）"""
+        # 既存のデータをクリア
+        for item in self.sector_count_tree.get_children():
+            self.sector_count_tree.delete(item)
+        
+        # セクター・業種別データをセクターごとにグループ化
+        sector_industry_dict: Dict[str, List[Tuple[str, int]]] = {}
+        for _, row in sector_industry_count_df.iterrows():
+            sector = row['sector']
+            industry = row['industry']
+            count = int(row['count'])
+            if sector not in sector_industry_dict:
+                sector_industry_dict[sector] = []
+            sector_industry_dict[sector].append((industry, count))
+        
+        # セクターごとにソート（銘柄数の降順）
+        for sector in sector_industry_dict:
+            sector_industry_dict[sector].sort(key=lambda x: x[1], reverse=True)
+        
+        # セクター別データを挿入（親アイテム）
+        sector_items = {}  # セクター名 -> アイテムIDのマッピング
+        for _, row in sector_count_df.iterrows():
+            sector = row['sector']
+            count = int(row['count'])
+            
+            # セクター行を親アイテムとして挿入
+            sector_item = self.sector_count_tree.insert(
+                "", "end", 
+                text="",  # ツリーアイコン用
+                values=(sector, "", f"{count:,}"),
+                tags=("sector",)
+            )
+            sector_items[sector] = sector_item
+            
+            # そのセクターの業種を子アイテムとして挿入
+            if sector in sector_industry_dict:
+                for industry, industry_count in sector_industry_dict[sector]:
+                    self.sector_count_tree.insert(
+                        sector_item, "end",
+                        text="",  # ツリーアイコン用
+                        values=("", industry, f"{industry_count:,}"),
+                        tags=("industry",)
+                    )
+        
+        # セクター行のスタイル設定
+        self.sector_count_tree.tag_configure("sector", font=("", 9, "bold"))
+        self.sector_count_tree.tag_configure("industry", font=("", 9))
+        
+        # セクター数に応じてTreeviewの高さを動的に調整（セクター全体が表示できるように）
+        sector_count = len(sector_count_df)
+        # セクター数 + ヘッダー行 + 余裕を持たせる
+        optimal_height = min(max(sector_count + 2, 10), 20)  # 最小10行、最大20行
+        self.sector_count_tree.config(height=optimal_height)
     
     def _display_chart(self):
         """グラフを別ウィンドウで表示"""
@@ -407,6 +532,19 @@ class MarketConditionsTab:
             self._plot_moving_average_chart(ax, self.current_flow_df, ma_period)
         elif chart_type == "stacked_bar":
             self._plot_stacked_bar_chart(ax, self.current_flow_df)
+        elif chart_type == "flow_per_stock":
+            if self.current_flow_per_stock_df is not None and not self.current_flow_per_stock_df.empty:
+                self._plot_flow_per_stock_chart(ax, self.current_flow_per_stock_df)
+            else:
+                ax.text(0.5, 0.5, "データが取得できませんでした", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
+        elif chart_type == "flow_per_stock_ma":
+            if self.current_flow_per_stock_df is not None and not self.current_flow_per_stock_df.empty:
+                ma_period = self.ma_period_var.get()
+                self._plot_moving_average_chart(ax, self.current_flow_per_stock_df, ma_period, is_per_stock=True)
+            else:
+                ax.text(0.5, 0.5, "データが取得できませんでした", 
+                       ha='center', va='center', transform=ax.transAxes, fontsize=14)
         
         # Canvasに配置
         canvas = FigureCanvasTkAgg(fig, chart_frame)
@@ -479,11 +617,11 @@ class MarketConditionsTab:
         if fig:
             fig.tight_layout()
     
-    def _plot_moving_average_chart(self, ax, df: pd.DataFrame, ma_period: int):
+    def _plot_moving_average_chart(self, ax, df: pd.DataFrame, ma_period: int, is_per_stock: bool = False):
         """移動平均の線グラフを描画"""
         # 主要セクターのみを表示（上位10セクター）
         if len(df.columns) > 10:
-            # 最新日の売買代金でソート
+            # 最新日の値でソート
             latest_values = df.iloc[-1].sort_values(ascending=False)
             top_sectors = latest_values.head(10).index.tolist()
             df_plot = df[top_sectors]
@@ -504,8 +642,15 @@ class MarketConditionsTab:
                    marker='o', markersize=2)
         
         ax.set_xlabel("日付", fontsize=10)
-        ax.set_ylabel("売買代金（億円）", fontsize=10)
-        ax.set_title(f"セクター別売買代金推移（{ma_period}日移動平均）", fontsize=12, fontweight="bold")
+        
+        # Y軸ラベルとタイトルを設定
+        if is_per_stock:
+            ax.set_ylabel("1銘柄あたり売買代金（億円）", fontsize=10)
+            ax.set_title(f"セクター別1銘柄あたり売買代金推移（{ma_period}日移動平均）", fontsize=12, fontweight="bold")
+        else:
+            ax.set_ylabel("売買代金（億円）", fontsize=10)
+            ax.set_title(f"セクター別売買代金推移（{ma_period}日移動平均）", fontsize=12, fontweight="bold")
+        
         ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
         ax.grid(True, alpha=0.3)
         
@@ -598,14 +743,198 @@ class MarketConditionsTab:
         if fig:
             fig.tight_layout()
     
-    def on_show_sector_symbols(self):
-        """選択したセクターの銘柄一覧を表示"""
-        selected_sector = self.sector_var.get()
+    def _plot_flow_per_stock_chart(self, ax, df: pd.DataFrame):
+        """1銘柄あたり売買代金の線グラフを描画"""
+        # 主要セクターのみを表示（上位10セクター）
+        if len(df.columns) > 10:
+            # 最新日の1銘柄あたり売買代金でソート
+            latest_values = df.iloc[-1].sort_values(ascending=False)
+            top_sectors = latest_values.head(10).index.tolist()
+            df_plot = df[top_sectors]
+        else:
+            df_plot = df
         
-        if not selected_sector:
-            messagebox.showwarning("警告", "セクターを選択してください。", parent=self.parent)
+        # 線グラフを描画
+        for sector in df_plot.columns:
+            ax.plot(df_plot.index, df_plot[sector], label=sector, linewidth=2, marker='o', markersize=3)
+        
+        ax.set_xlabel("日付", fontsize=10)
+        ax.set_ylabel("1銘柄あたり売買代金（億円）", fontsize=10)
+        ax.set_title("セクター別1銘柄あたり売買代金推移", fontsize=12, fontweight="bold")
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+        
+        # 日付フォーマット（毎月1日）
+        ax.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+        ax.xaxis.set_major_locator(mdates.MonthLocator(bymonthday=1))
+        plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+        
+        fig = ax.get_figure()
+        if fig:
+            fig.tight_layout()
+    
+    def _on_sector_count_double_click(self, event):
+        """セクター別登録銘柄数の行をダブルクリックしたときの処理"""
+        selection = self.sector_count_tree.selection()
+        if not selection:
             return
         
+        item_id = selection[0]
+        item = self.sector_count_tree.item(item_id)
+        tags = item.get('tags', [])
+        values = item['values']
+        
+        if not values or len(values) == 0:
+            return
+        
+        # 業種行の場合
+        if 'industry' in tags:
+            # 親アイテム（セクター行）を取得
+            parent_id = self.sector_count_tree.parent(item_id)
+            if not parent_id:
+                return
+            
+            parent_item = self.sector_count_tree.item(parent_id)
+            parent_values = parent_item['values']
+            
+            if not parent_values or len(parent_values) == 0:
+                return
+            
+            sector = parent_values[0]  # セクター名は親アイテムの最初の列
+            industry = values[1]  # 業種名は業種行の2番目の列
+            
+            if not sector or not industry:
+                return
+            
+            # セクター・業種の銘柄一覧を表示
+            self._load_and_show_sector_industry_symbols(sector, industry)
+            return
+        
+        # セクター行の場合
+        sector = values[0]  # セクター名は最初の列
+        
+        # "分析実行後に表示されます"などのメッセージの場合は無視
+        if sector == "分析実行後に表示されます" or not sector:
+            return
+        
+        # セクターの銘柄一覧を表示
+        self._load_and_show_sector_symbols(sector)
+    
+    def _load_and_show_sector_industry_symbols(self, selected_sector: str, selected_industry: str):
+        """指定されたセクター・業種の銘柄一覧を読み込んで表示"""
+        def load_symbols():
+            try:
+                self.status_var.set(f"状態: {selected_sector} - {selected_industry}の銘柄一覧を読み込み中...")
+                
+                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+                from src.screening.jpx400_manager import JPX400Manager
+                
+                ohlcv_manager = OHLCVDataManager(self.db_path)
+                jpx400_manager = JPX400Manager()
+                
+                # JPX400銘柄リストを取得
+                symbols = jpx400_manager.load_symbols()
+                if not symbols:
+                    self.parent.after(0, lambda: messagebox.showwarning(
+                        "警告",
+                        "JPX400銘柄リストが空です。",
+                        parent=self.parent
+                    ))
+                    return
+                
+                # セクター情報と業種情報を一括取得
+                sectors_dict = ohlcv_manager.get_symbol_sectors(symbols)
+                industries_dict = ohlcv_manager.get_symbol_industries(symbols)
+                
+                # 選択したセクター・業種の銘柄を抽出
+                sector_industry_symbols = [
+                    s for s in symbols 
+                    if sectors_dict.get(s) == selected_sector and industries_dict.get(s) == selected_industry
+                ]
+                
+                if not sector_industry_symbols:
+                    self.parent.after(0, lambda: messagebox.showinfo(
+                        "情報",
+                        f"{selected_sector} - {selected_industry}に属する銘柄が見つかりませんでした。",
+                        parent=self.parent
+                    ))
+                    return
+                
+                # 銘柄名を取得
+                symbol_names = ohlcv_manager.get_symbol_names(sector_industry_symbols)
+                
+                # データ統計を取得
+                symbol_stats = {}
+                for symbol in sector_industry_symbols:
+                    stats = ohlcv_manager.get_data_stats(symbol, timeframe="1d", source="yahoo")
+                    if stats:
+                        # 統計情報を初期化
+                        symbol_stats[symbol] = {
+                            'data_count': stats.get('total_count', 0),
+                            'first_date': stats.get('start_date'),
+                            'last_date': stats.get('end_date'),
+                            'last_updated_at': stats.get('last_updated_at'),
+                            'latest_price': None,
+                            'latest_volume': None,
+                            'sigma_value': None
+                        }
+                
+                # 最新出来高と現在株価、σ値を取得
+                print(f"[セクター・業種銘柄一覧] 最新出来高と現在株価、σ値を取得中...")
+                for symbol in sector_industry_symbols:
+                    try:
+                        df_latest = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                            symbol=symbol,
+                            timeframe='1d',
+                            source='yahoo',
+                            include_temporary=True
+                        )
+                        if not df_latest.empty and symbol in symbol_stats:
+                            latest_row = df_latest.iloc[-1]
+                            symbol_stats[symbol]['latest_price'] = float(latest_row['close'])
+                            symbol_stats[symbol]['latest_volume'] = int(latest_row['volume']) if pd.notna(latest_row['volume']) else None
+                            
+                            # σ値計算（過去20日の出来高から）
+                            if len(df_latest) >= 5 and symbol_stats[symbol]['latest_volume'] is not None:
+                                volumes = df_latest['volume'].tail(20)
+                                if len(volumes) >= 5:
+                                    mean_volume = volumes.mean()
+                                    std_volume = volumes.std()
+                                    if std_volume > 0:
+                                        sigma_value = (symbol_stats[symbol]['latest_volume'] - mean_volume) / std_volume
+                                        symbol_stats[symbol]['sigma_value'] = float(sigma_value)
+                    except Exception as e:
+                        print(f"[セクター・業種銘柄一覧] {symbol}の最新データ取得エラー: {e}")
+                
+                # ウィンドウを表示
+                self.parent.after(0, lambda: self._show_sector_symbols_window(
+                    f"{selected_sector} - {selected_industry}", 
+                    sector_industry_symbols, 
+                    symbol_names, 
+                    sectors_dict, 
+                    industries_dict, 
+                    symbol_stats
+                ))
+                
+                self.status_var.set("状態: 待機中")
+                
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"[ERROR] セクター・業種別銘柄一覧取得エラー: {e}")
+                print(f"[ERROR] 詳細: {error_detail}")
+                self.parent.after(0, lambda: messagebox.showerror(
+                    "エラー",
+                    f"銘柄一覧の取得でエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。",
+                    parent=self.parent
+                ))
+                self.status_var.set("状態: 待機中")
+        
+        thread = threading.Thread(target=load_symbols, daemon=True)
+        thread.start()
+    
+    def _load_and_show_sector_symbols(self, selected_sector: str):
+        """指定されたセクターの銘柄一覧を読み込んで表示"""
         def load_symbols():
             try:
                 self.status_var.set(f"状態: {selected_sector}の銘柄一覧を読み込み中...")
