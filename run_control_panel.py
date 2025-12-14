@@ -33,14 +33,26 @@ DB_PATH = os.environ.get("TICK_DB_PATH", "data/tick_data.db")
 
 
 def main():
-    # データディレクトリを作成（データベースファイルの自動作成を確実にするため）
-    # exist_ok=Trueにより、既に存在する場合は何もしない（既存データを保護）
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    
-    # ControlPanelの初期化時に、既存のDBファイルがあればそれを使用し、
-    # なければ新規作成される（_ensure_database()メソッド内で処理）
-    app = ControlPanel(db_path=DB_PATH)
-    app.mainloop()
+    try:
+        # データディレクトリを作成（データベースファイルの自動作成を確実にするため）
+        # exist_ok=Trueにより、既に存在する場合は何もしない（既存データを保護）
+        Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        
+        # ControlPanelの初期化時に、既存のDBファイルがあればそれを使用し、
+        # なければ新規作成される（_ensure_database()メソッド内で処理）
+        app = ControlPanel(db_path=DB_PATH)
+        app.mainloop()
+    except Exception as e:
+        import traceback
+        print("=" * 60)
+        print("エラーが発生しました")
+        print("=" * 60)
+        print(f"エラー内容: {e}")
+        print()
+        print("詳細:")
+        traceback.print_exc()
+        print("=" * 60)
+        input("Enterキーを押して終了してください...")
 
 
 if __name__ == "__main__":

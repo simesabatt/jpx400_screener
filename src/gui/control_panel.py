@@ -27,7 +27,7 @@ class ControlPanel(tk.Tk):
 
         self.db_path = db_path  # DBパスを保持
 
-        # データベースを初期化（テーブルを作成）
+        # データベースを確認・準備（既存データは保持される）
         self._ensure_database()
 
         self.title("JPX400スクリーニング コントロールパネル")
@@ -72,21 +72,36 @@ class ControlPanel(tk.Tk):
         - 既存のDBファイルがあればそれを使用し、なければ新規作成される
         - 既存のテーブルがあれば何もしない（CREATE TABLE IF NOT EXISTS）
         - 2回目以降の起動でも、常に同じDBファイル（self.db_path）を使用する
+        - 既存のデータは保持される（削除されない）
         """
         try:
+            import os
+            db_exists = os.path.exists(self.db_path)
+            if db_exists:
+                print(f"[INFO] データベースを確認中: {self.db_path} (既存データを保持します)")
+            else:
+                print(f"[INFO] データベースを準備中: {self.db_path} (新規作成)")
+            
             # OHLCVDataManagerとSymbolNameManagerを初期化することで、
             # データベースファイルとテーブルが自動的に作成される
             # 既存のDBファイルがあればそれを使用し、なければ新規作成される
             from src.data_collector.ohlcv_data_manager import OHLCVDataManager
             from src.data_collector.symbol_name_manager import SymbolNameManager
             
-            # データベースを初期化（テーブルを作成）
-            # 既存のテーブルがあれば何もしない（CREATE TABLE IF NOT EXISTS）
+            print("[DEBUG] データベーステーブルを確認中...")
             OHLCVDataManager(self.db_path)
             SymbolNameManager(self.db_path)
+            
+            if db_exists:
+                print("[INFO] データベースの確認が完了しました (既存データは保持されています)")
+            else:
+                print("[INFO] データベースの準備が完了しました")
         except Exception as e:
             # エラーが発生してもアプリケーションは起動を続ける
-            print(f"[WARN] データベース初期化時にエラーが発生しました: {e}")
+            import traceback
+            print(f"[WARN] データベース確認時にエラーが発生しました: {e}")
+            print("[WARN] 詳細:")
+            traceback.print_exc()
 
     # ================= UI 構築 =================
     def _build_ui(self):
