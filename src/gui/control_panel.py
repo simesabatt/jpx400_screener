@@ -243,7 +243,8 @@ class ControlPanel(tk.Tk):
         use_macd_kd_filter: bool = True,
         macd_kd_window: int = 3,
         is_history: bool = False,
-        executed_at: str = None
+        executed_at: str = None,
+        performance_summary: dict = None
     ):
         """選択した銘柄をスクリーニング（ScreeningUIに委譲）"""
         if is_history:
@@ -252,7 +253,8 @@ class ControlPanel(tk.Tk):
                 parent_window, symbols, check_condition1, check_condition2,
                             check_condition3, check_condition4, check_condition5, check_condition6,
                 check_golden_cross_5_25, check_golden_cross_25_75, golden_cross_mode,
-                use_macd_kd_filter, macd_kd_window, is_history, executed_at
+                use_macd_kd_filter, macd_kd_window, is_history, executed_at,
+                performance_summary=performance_summary
             )
         else:
             # 通常のスクリーニング実行

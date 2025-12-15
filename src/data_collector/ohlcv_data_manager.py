@@ -518,7 +518,8 @@ class OHLCVDataManager:
         df: pd.DataFrame,
         timeframe: str,
         source: str = "yahoo",
-        overwrite: bool = False
+        overwrite: bool = False,
+        allow_temporary_overwrite_latest: bool = False
     ) -> dict:
         """
         OHLCVデータを保存（仮終値フラグを考慮）
@@ -529,6 +530,7 @@ class OHLCVDataManager:
             timeframe: 時間足
             source: データソース
             overwrite: 既存データを上書きするか
+            allow_temporary_overwrite_latest: Trueの場合、最新日については正式データが存在しても仮データで上書きする
             
         Returns:
             dict: 保存結果（saved_count, skipped_count, updated_count, total_count）
@@ -664,8 +666,27 @@ class OHLCVDataManager:
                         # 最新日より新しいデータは新規保存として扱う（下のelse節で処理）
                         is_latest_date = (latest_date is not None and dt_datetime == latest_date) or latest_date is None
                         
-                        # 既存データが正式で、新データが仮の場合、上書きしない
+                        # 既存データが正式で、新データが仮の場合の扱い
                         if existing_is_temporary == 0 and is_temporary == 1:
+                            # 最新日についてのみ、明示的に許可された場合は上書きする
+                            if allow_temporary_overwrite_latest and is_latest_date:
+                                cursor.execute('''
+                                    UPDATE ohlcv_data
+                                    SET open = ?, high = ?, low = ?, close = ?, volume = ?,
+                                        is_temporary_close = 1, updated_at = ?
+                                    WHERE id = ?
+                                ''', (
+                                    open_val,
+                                    high_val,
+                                    low_val,
+                                    close_val,
+                                    volume_val,
+                                    datetime.now().isoformat(),
+                                    existing_id
+                                ))
+                                updated_count += 1
+                                continue
+                            
                             skipped_count += 1
                             continue
                         

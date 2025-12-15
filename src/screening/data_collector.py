@@ -53,21 +53,10 @@ class JPX400DataCollector:
         today = date.today()
         current_hour = datetime.now().hour
         
-        # 当日のデータがあるか確認
-        if not df_daily.empty:
-            latest_date = df_daily.index[-1].date()
-            if latest_date == today:
-                # 当日データがある場合、仮終値か確認
-                latest_row = df_daily.iloc[-1]
-                if latest_row.get('is_temporary_close', 0) == 0:
-                    # 正式データがある場合は補完不要
-                    return df_daily
-        
-        # 19時以降の場合は正式な日足データを取得
         is_after_19 = current_hour >= 19
-        
+
+        # 19時以降: 正式データで上書き（もしくは正式データが既に入っていれば何もしない）
         if is_after_19:
-            # 正式な日足データを取得
             try:
                 ticker = yf.Ticker(f"{symbol}.T")
                 df_official = ticker.history(period="2d", interval="1d")
@@ -96,9 +85,7 @@ class JPX400DataCollector:
                             'is_temporary_close': 0  # 正式データ
                         }
                         
-                        # 日足データに追加/更新
                         today_index = pd.Timestamp(today)
-                        
                         if not df_daily.empty and df_daily.index[-1].date() == today:
                             # 当日データがある場合、正式データで更新
                             df_daily.loc[today_index] = today_data
@@ -121,8 +108,8 @@ class JPX400DataCollector:
                 # 正式データ取得に失敗
                 print(f"[{symbol}] 19時以降: 日足データ取得エラー: {e}")
                 return df_daily
-        
-        # 19時以前の場合は1分足から補完（仮終値）
+
+        # 19時以前: 必ず1分足で当日データを再計算し、仮データとして保存する
         max_retries = 2  # 補完処理は軽量なので、リトライ回数は少なめ
         for attempt in range(max_retries):
             try:
@@ -153,20 +140,12 @@ class JPX400DataCollector:
                     'is_temporary_close': 1  # 仮終値フラグ
                 }
                 
-                # 日足データに追加/更新
+                # 日足データに追加/更新（仮データとして必ず上書き）
                 today_index = pd.Timestamp(today)
-                
                 if not df_daily.empty and df_daily.index[-1].date() == today:
-                    # 当日データがある場合、更新（正式データでない場合のみ）
-                    existing_row = df_daily.iloc[-1]
-                    if existing_row.get('is_temporary_close', 0) == 1:
-                        # 既存データが仮終値の場合のみ更新
-                        df_daily.loc[today_index] = today_data
-                        print(f"[{symbol}] 19時以前: 当日データを更新しました（仮終値、時刻: {current_hour}時）")
-                    else:
-                        print(f"[{symbol}] 19時以前: 当日データは既に正式データのため更新しません（時刻: {current_hour}時）")
+                    df_daily.loc[today_index] = today_data
+                    print(f"[{symbol}] 19時以前: 当日データを再計算し更新しました（仮終値、時刻: {current_hour}時）")
                 else:
-                    # 当日データがない場合、追加
                     new_row = pd.DataFrame([today_data], index=[today_index])
                     df_daily = pd.concat([df_daily, new_row])
                     print(f"[{symbol}] 19時以前: 当日データを追加しました（仮終値、時刻: {current_hour}時、終値: {today_data['close']:.2f}）")
@@ -318,6 +297,7 @@ class JPX400DataCollector:
                 ticker = yf.Ticker(f"{symbol}.T")
                 
                 # 銘柄情報を確認（存在しない銘柄や上場廃止銘柄を検出）
+                # ※銘柄名の更新は別ボタンで行うため、ここでは保存しない
                 try:
                     info = ticker.info
                     if not info or len(info) <= 1:  # 空の辞書または最小限の情報のみ
@@ -326,20 +306,7 @@ class JPX400DataCollector:
                             'success': False,
                             'error': '銘柄が見つかりません（上場廃止の可能性）'
                         }
-                    
-                    # 銘柄名を取得してDBに保存（和名を優先）
-                    company_name = self.ohlcv_manager._extract_japanese_name(info, symbol)
-                    if company_name:
-                        # セクター情報も取得（既存のセクター情報がある場合は上書きしない）
-                        sector_en = info.get('sector') or info.get('industry') or None
-                        # セクター情報を日本語に変換（SymbolNameManagerのメソッドを使用）
-                        from src.data_collector.symbol_name_manager import SymbolNameManager
-                        symbol_name_manager = SymbolNameManager(self.db_path)
-                        sector = symbol_name_manager._translate_sector_to_japanese(sector_en) if sector_en else None
-                        # 銘柄名とセクター情報を保存（既存のセクター情報を保持）
-                        self.ohlcv_manager.save_symbol_name(symbol, company_name, sector, preserve_existing_sector=True)
-                
-                except Exception as info_error:
+                except Exception:
                     # 情報取得エラーは無視して続行（データ取得を試みる）
                     pass
                 
@@ -409,7 +376,8 @@ class JPX400DataCollector:
                     df=df_daily,
                     timeframe='1d',
                     source='yahoo',
-                    overwrite=True
+                    overwrite=True,
+                    allow_temporary_overwrite_latest=True
                 )
                 
                 return {

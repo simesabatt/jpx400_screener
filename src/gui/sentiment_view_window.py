@@ -393,9 +393,11 @@ class SentimentViewWindow(tk.Toplevel):
             if versions:
                 version_list = [str(v[0]) for v in versions]
                 self.version_combo['values'] = version_list
-                if str(version) not in version_list and version_list:
-                    self.weights_version_var.set(int(version_list[0]))
-                    version = int(version_list[0])
+                latest_version = int(version_list[0])
+                # つねに最新バージョンを選択状態にする
+                if version != latest_version:
+                    self.weights_version_var.set(latest_version)
+                    version = latest_version
                     weights_row = conn.execute(
                         "SELECT * FROM sentiment_weights WHERE version = ?",
                         (version,)

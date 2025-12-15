@@ -475,7 +475,8 @@ class DataManagementTab:
                     'last_updated_at': None,
                     'latest_volume': None,
                     'latest_price': None,
-                    'sigma_value': None
+                    'sigma_value': None,
+                    'latest_is_temporary_close': None
                 })
                 
                 for info in symbols_info:
@@ -506,6 +507,12 @@ class DataManagementTab:
                             latest_row = df_latest.iloc[-1]
                             symbol_stats[symbol]['latest_price'] = float(latest_row['close'])
                             symbol_stats[symbol]['latest_volume'] = int(latest_row['volume']) if pd.notna(latest_row['volume']) else None
+                            # 1分足から作成した仮終値かどうかを保持する
+                            is_temp_flag = latest_row.get('is_temporary_close', 0)
+                            try:
+                                symbol_stats[symbol]['latest_is_temporary_close'] = bool(int(is_temp_flag))
+                            except (TypeError, ValueError):
+                                symbol_stats[symbol]['latest_is_temporary_close'] = None
                             
                             # σ値計算（過去20日の出来高から）
                             if len(df_latest) >= 5 and symbol_stats[symbol]['latest_volume'] is not None:
@@ -581,7 +588,19 @@ class DataManagementTab:
         h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal")
         h_scrollbar.pack(side="bottom", fill="x")
         
-        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
+        columns = (
+            "銘柄コード",
+            "銘柄名",
+            "セクター",
+            "業種",
+            "データ件数",
+            "最初の日付",
+            "最後の日付",
+            "データ区分",
+            "現在株価",
+            "最新出来高",
+            "σ値"
+        )
         tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -606,6 +625,7 @@ class DataManagementTab:
         tree.column("データ件数", width=100, anchor="e")
         tree.column("最初の日付", width=120, anchor="center")
         tree.column("最後の日付", width=120, anchor="center")
+        tree.column("データ区分", width=110, anchor="center")
         tree.column("現在株価", width=100, anchor="e")
         tree.column("最新出来高", width=120, anchor="e")
         tree.column("σ値", width=120, anchor="e")
@@ -682,6 +702,9 @@ class DataManagementTab:
             latest_price = f"{stats['latest_price']:.2f}" if stats['latest_price'] is not None else "N/A"
             latest_volume = f"{stats['latest_volume']:,}" if stats['latest_volume'] is not None else "N/A"
             sigma_str = f"{stats['sigma_value']:+.2f}σ" if stats.get('sigma_value') is not None else "N/A"
+            data_status_label = "仮データ" if stats.get('latest_is_temporary_close') else "正式データ"
+            if stats.get('latest_is_temporary_close') is None:
+                data_status_label = "不明"
             
             tree.insert(
                 "",
@@ -694,6 +717,7 @@ class DataManagementTab:
                     f"{stats['data_count']:,}",
                     first_date,
                     last_date,
+                    data_status_label,
                     latest_price,
                     latest_volume,
                     sigma_str
@@ -945,7 +969,8 @@ class DataManagementTab:
             
             history_window = tk.Toplevel(self.parent)
             history_window.title("スクリーニング履歴")
-            history_window.geometry("900x600")
+            # デフォルトサイズを横長に拡大（一覧で勝率/平均/中央値を見やすくする）
+            history_window.geometry("1500x650")
             
             main_frame = ttk.Frame(history_window)
             main_frame.pack(fill="both", expand=True, padx=8, pady=8)
@@ -964,7 +989,12 @@ class DataManagementTab:
             v_scrollbar = ttk.Scrollbar(tree_frame, orient="vertical")
             v_scrollbar.pack(side="right", fill="y")
             
-            columns = ("実行日時", "銘柄数", "条件")
+            columns = (
+                "実行日時", "銘柄数", "条件",
+                "+1日勝率", "+1日平均", "+1日中央値",
+                "+2日勝率", "+2日平均", "+2日中央値",
+                "+3日勝率", "+3日平均", "+3日中央値"
+            )
             tree = ttk.Treeview(
                 tree_frame,
                 columns=columns,
@@ -978,10 +1008,28 @@ class DataManagementTab:
             tree.heading("実行日時", text="実行日時")
             tree.heading("銘柄数", text="銘柄数")
             tree.heading("条件", text="条件")
+            tree.heading("+1日勝率", text="+1日勝率")
+            tree.heading("+1日平均", text="+1日平均")
+            tree.heading("+1日中央値", text="+1日中央値")
+            tree.heading("+2日勝率", text="+2日勝率")
+            tree.heading("+2日平均", text="+2日平均")
+            tree.heading("+2日中央値", text="+2日中央値")
+            tree.heading("+3日勝率", text="+3日勝率")
+            tree.heading("+3日平均", text="+3日平均")
+            tree.heading("+3日中央値", text="+3日中央値")
             
             tree.column("実行日時", width=150, anchor="center")
             tree.column("銘柄数", width=80, anchor="e")  # 右詰め
-            tree.column("条件", width=650, anchor="w")
+            tree.column("条件", width=320, anchor="w")
+            tree.column("+1日勝率", width=110, anchor="center")
+            tree.column("+1日平均", width=110, anchor="center")
+            tree.column("+1日中央値", width=110, anchor="center")
+            tree.column("+2日勝率", width=110, anchor="center")
+            tree.column("+2日平均", width=110, anchor="center")
+            tree.column("+2日中央値", width=110, anchor="center")
+            tree.column("+3日勝率", width=110, anchor="center")
+            tree.column("+3日平均", width=110, anchor="center")
+            tree.column("+3日中央値", width=110, anchor="center")
             
             for history in history_list:
                 executed_at = history['executed_at']
@@ -1020,10 +1068,41 @@ class DataManagementTab:
                 
                 condition_str = ", ".join(condition_texts) if condition_texts else "条件なし"
                 
+                # 勝率の整形
+                def fmt_rate(h: int) -> str:
+                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                    total = info.get('total')
+                    rate = info.get('rate')
+                    win = info.get('win')
+                    if total and rate is not None:
+                        return f"{win}/{total} ({rate:.1f}%)"
+                    return "N/A"
+
+                def fmt_avg(h: int) -> str:
+                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                    avg = info.get('avg')
+                    if avg is None:
+                        return "N/A"
+                    return f"{avg:+.2f}%"
+
+                def fmt_med(h: int) -> str:
+                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                    med = info.get('median')
+                    if med is None:
+                        return "N/A"
+                    return f"{med:+.2f}%"
+
                 tree.insert(
                     "",
                     "end",
-                    values=(executed_at_str, f"{history['symbol_count']}件", condition_str),
+                    values=(
+                        executed_at_str,
+                        f"{history['symbol_count']}件",
+                        condition_str,
+                        fmt_rate(1), fmt_avg(1), fmt_med(1),
+                        fmt_rate(2), fmt_avg(2), fmt_med(2),
+                        fmt_rate(3), fmt_avg(3), fmt_med(3)
+                    ),
                     tags=(history['id'],)
                 )
             
@@ -1115,7 +1194,8 @@ class DataManagementTab:
                     use_macd_kd_filter=conditions.get('use_macd_kd_filter', False),
                     macd_kd_window=conditions.get('macd_kd_window', 1),
                     is_history=True,
-                    executed_at=history['executed_at']
+                    executed_at=history['executed_at'],
+                    performance_summary=history.get('performance_summary')
                 )
         
         except Exception as e:

@@ -249,7 +249,8 @@ class ScreeningUI:
         use_macd_kd_filter: bool = False,
         macd_kd_window: int = 1,
         is_history: bool = False,
-        executed_at: str = None
+        executed_at: str = None,
+        performance_summary: dict = None
     ):
         """
         スクリーニング結果を新しいウィンドウで表示
@@ -330,9 +331,10 @@ class ScreeningUI:
         if is_history:
             columns = (
                 "銘柄コード", "銘柄名", "セクター", "業種",
-                "SC時価格", "SC時出来高", "現在価格", "最新出来高",
-                "出来高σ(20日)", "状態",
-                "GC 5/25", "GC 25/75",
+                "SC時価格", "SC時出来高",
+                "翌1日", "翌2日", "翌3日",
+                "現在価格", "最新出来高",
+                "出来高σ(20日)",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         else:
@@ -362,6 +364,26 @@ class ScreeningUI:
         ohlcv_manager = OHLCVDataManager(self.db_path)
         
         self._populate_treeview_data(tree, results, ohlcv_manager, is_history)
+
+        # 勝率サマリーを表示（履歴のみ）
+        if is_history and performance_summary:
+            summary_label = ttk.Label(
+                header_frame,
+                foreground="gray",
+                font=("", 9)
+            )
+            parts = []
+            for h_key in [1, 2, 3]:
+                info = performance_summary.get("win_rates", {}).get(h_key, {})
+                total = info.get("total", 0)
+                rate = info.get("rate", None)
+                win = info.get("win", 0)
+                if total and rate is not None:
+                    parts.append(f"+{h_key}日: {win}/{total} ({rate:.1f}%)")
+                else:
+                    parts.append(f"+{h_key}日: データなし")
+            summary_label.config(text=" | ".join(parts))
+            summary_label.pack(side="left", padx=(12, 0))
         
         # ダブルクリックでチャート表示
         def on_double_click(event):
@@ -426,12 +448,12 @@ class ScreeningUI:
         if is_history:
             tree.heading("SC時価格", text="SC時価格")
             tree.heading("SC時出来高", text="SC時出来高")
+            tree.heading("翌1日", text="翌1日騰落率")
+            tree.heading("翌2日", text="翌2日騰落率")
+            tree.heading("翌3日", text="翌3日騰落率")
             tree.heading("現在価格", text="現在価格")
             tree.heading("最新出来高", text="最新出来高")
             tree.heading("出来高σ(20日)", text="出来高σ(20日)")
-            tree.heading("状態", text="状態")
-            tree.heading("GC 5/25", text="GC 5/25")
-            tree.heading("GC 25/75", text="GC 25/75")
             tree.heading("5MA乖離率", text="(当時)5MA乖離率(%)")
             tree.heading("25MA乖離率", text="(当時)25MA乖離率(%)")
             tree.heading("75MA乖離率", text="(当時)75MA乖離率(%)")
@@ -457,6 +479,9 @@ class ScreeningUI:
         if is_history:
             tree.column("SC時価格", width=100, anchor="e")
             tree.column("SC時出来高", width=120, anchor="e")
+            tree.column("翌1日", width=110, anchor="center")
+            tree.column("翌2日", width=110, anchor="center")
+            tree.column("翌3日", width=110, anchor="center")
             tree.column("現在価格", width=100, anchor="e")
             tree.column("最新出来高", width=120, anchor="e")
         else:
@@ -464,13 +489,19 @@ class ScreeningUI:
             tree.column("最新出来高", width=120, anchor="e")
         
         tree.column("出来高σ(20日)", width=120, anchor="e")
-        tree.column("状態", width=100, anchor="center")
-        tree.column("GC 5/25", width=110, anchor="center")
-        tree.column("GC 25/75", width=110, anchor="center")
-        tree.column("5MA乖離率", width=110, anchor="e")
-        tree.column("25MA乖離率", width=110, anchor="e")
-        tree.column("75MA乖離率", width=110, anchor="e")
-        tree.column("200MA乖離率", width=110, anchor="e")
+        if is_history:
+            tree.column("5MA乖離率", width=110, anchor="e")
+            tree.column("25MA乖離率", width=110, anchor="e")
+            tree.column("75MA乖離率", width=110, anchor="e")
+            tree.column("200MA乖離率", width=110, anchor="e")
+        else:
+            tree.column("状態", width=100, anchor="center")
+            tree.column("GC 5/25", width=110, anchor="center")
+            tree.column("GC 25/75", width=110, anchor="center")
+            tree.column("5MA乖離率", width=110, anchor="e")
+            tree.column("25MA乖離率", width=110, anchor="e")
+            tree.column("75MA乖離率", width=110, anchor="e")
+            tree.column("200MA乖離率", width=110, anchor="e")
     
     def _populate_treeview_data(self, tree, results, ohlcv_manager, is_history):
         """Treeviewにデータを追加"""
@@ -510,6 +541,9 @@ class ScreeningUI:
                 sc_price = result['current_price']  # スクリーニング実施時の価格
                 sc_volume = result.get('latest_volume')  # スクリーニング実施時の出来高
                 sc_volume_str = f"{sc_volume:,}" if sc_volume is not None else "N/A"
+                perf1 = result.get("perf_day1_label", "N/A")
+                perf2 = result.get("perf_day2_label", "N/A")
+                perf3 = result.get("perf_day3_label", "N/A")
                 
                 # 最新の価格と出来高を取得
                 try:
@@ -617,12 +651,12 @@ class ScreeningUI:
                         industry,
                         f"{sc_price:.2f}",  # SC時価格
                         sc_volume_str,  # SC時出来高
+                        perf1,
+                        perf2,
+                        perf3,
                         f"{current_price:.2f}",  # 現在価格
                         current_volume_str,  # 最新出来高
                         sigma_str,
-                        status,
-                        gc5_25_str,
-                        gc25_75_str,
                         ma5_str,
                         ma25_str,
                         ma75_str,
