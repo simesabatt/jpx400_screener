@@ -19,6 +19,7 @@ develop-eggs/
 # dist/data/ と dist/nul は除外
 dist/data/
 dist/nul
+dist/直接起動.bat - ショートカット.lnk
 downloads/
 eggs/
 .eggs/
