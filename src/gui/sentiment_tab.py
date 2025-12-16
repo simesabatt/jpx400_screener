@@ -169,13 +169,18 @@ class SentimentTab:
 
                 evaluator = SentimentEvaluator(self.db_path)
                 today = datetime.now().strftime("%Y-%m-%d")
-                result = evaluator.record_and_evaluate(today)
+                yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+
+                # 当日の市場動向を記録
+                evaluator.record_market_outcome(today)
+                
+                # 前日のスコアを当日の市場動向と比較して評価
+                evaluator.evaluate_scores(yesterday, today)
+                
+                report = evaluator.generate_evaluation_report(days=30)
                 self._load_sentiment_status()
 
-                if result:
-                    print(f"[自動実行完了] 市場動向記録・評価: 評価={result.get('evaluation', 'N/A')}, 精度={result.get('accuracy', 'N/A')}")
-                else:
-                    print("[自動実行警告] 市場動向記録・評価: 前日のスコアが見つかりません")
+                print(f"[自動実行完了] 市場動向記録・評価: 方向性一致率(30日)={report['direction_accuracy']:.1f}%, 平均予測誤差={report['avg_error']:.1f}点, サンプル数={report['sample_size']}")
             except Exception as e:
                 print(f"[自動実行エラー] 市場動向記録・評価で例外: {e}")
                 import traceback

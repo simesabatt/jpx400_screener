@@ -1018,18 +1018,18 @@ class DataManagementTab:
             tree.heading("+3日平均", text="+3日平均")
             tree.heading("+3日中央値", text="+3日中央値")
             
-            tree.column("実行日時", width=150, anchor="center")
-            tree.column("銘柄数", width=80, anchor="e")  # 右詰め
-            tree.column("条件", width=320, anchor="w")
-            tree.column("+1日勝率", width=110, anchor="center")
-            tree.column("+1日平均", width=110, anchor="center")
-            tree.column("+1日中央値", width=110, anchor="center")
-            tree.column("+2日勝率", width=110, anchor="center")
-            tree.column("+2日平均", width=110, anchor="center")
-            tree.column("+2日中央値", width=110, anchor="center")
-            tree.column("+3日勝率", width=110, anchor="center")
-            tree.column("+3日平均", width=110, anchor="center")
-            tree.column("+3日中央値", width=110, anchor="center")
+            tree.column("実行日時", width=180, anchor="center")
+            tree.column("銘柄数", width=90, anchor="e")  # 右詰め
+            tree.column("条件", width=450, anchor="w")
+            tree.column("+1日勝率", width=100, anchor="center")
+            tree.column("+1日平均", width=100, anchor="center")
+            tree.column("+1日中央値", width=100, anchor="center")
+            tree.column("+2日勝率", width=100, anchor="center")
+            tree.column("+2日平均", width=100, anchor="center")
+            tree.column("+2日中央値", width=100, anchor="center")
+            tree.column("+3日勝率", width=100, anchor="center")
+            tree.column("+3日平均", width=100, anchor="center")
+            tree.column("+3日中央値", width=100, anchor="center")
             
             for history in history_list:
                 executed_at = history['executed_at']
