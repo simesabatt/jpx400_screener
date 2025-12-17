@@ -268,6 +268,9 @@ class JPX400Screener:
         """
         条件2: 5MA線の上で2回続けて陽線が出ている
         
+        注意: DBにある最後の日付（本日）とその前日で判定します。
+        仮終値データ（is_temporary_close=1）は除外しますが、正式データ（is_temporary_close=0）は使用します。
+        
         Args:
             df: 日足データ（移動平均線を含む）
             
@@ -277,10 +280,23 @@ class JPX400Screener:
         if len(df) < 2:
             return False
         
-        latest = df.iloc[-1]
-        prev = df.iloc[-2]
+        # 仮終値データ（is_temporary_close=1）を除外
+        # 正式データ（is_temporary_close=0またはNone）のみを使用
+        if 'is_temporary_close' in df.columns:
+            df_excluding_temporary = df[df['is_temporary_close'] == 0]
+        else:
+            # is_temporary_close列がない場合は全て正式データとして扱う
+            df_excluding_temporary = df
         
-        # 最新2本が陽線か
+        # 仮終値データを除外した後、データが2日未満の場合はFalseを返す
+        if len(df_excluding_temporary) < 2:
+            return False
+        
+        # DBの最新日付（仮終値を除外した後の最新、正式データ）とその前日で判定
+        latest = df_excluding_temporary.iloc[-1]
+        prev = df_excluding_temporary.iloc[-2]
+        
+        # 最新2本が陽線か（DBの最新日付とその前日）
         is_positive_latest = latest['close'] > latest['open']
         is_positive_prev = prev['close'] > prev['open']
         
