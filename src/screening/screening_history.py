@@ -15,6 +15,8 @@ from typing import List, Dict, Optional, Tuple
 import os
 
 from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+from src.screening.jpx400_manager import JPX400Manager
+from datetime import date
 
 
 class ScreeningHistory:
@@ -30,6 +32,7 @@ class ScreeningHistory:
         self.db_path = db_path
         self._ensure_tables()
         self._ohlcv_manager = OHLCVDataManager(db_path)
+        self._jpx400_manager = JPX400Manager()
     
     def _ensure_tables(self):
         """履歴テーブルを作成"""
@@ -77,6 +80,16 @@ class ScreeningHistory:
                 # 既に存在する場合はスキップ
                 pass
             
+            # 全銘柄パフォーマンステーブル
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS all_symbols_performance (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    date TEXT NOT NULL UNIQUE,
+                    performance_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
             # インデックスを作成
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_screening_history_executed_at 
@@ -89,6 +102,10 @@ class ScreeningHistory:
             cursor.execute("""
                 CREATE INDEX IF NOT EXISTS idx_screening_history_symbols_symbol 
                 ON screening_history_symbols(symbol)
+            """)
+            cursor.execute("""
+                CREATE INDEX IF NOT EXISTS idx_all_symbols_performance_date 
+                ON all_symbols_performance(date)
             """)
             
             conn.commit()
@@ -469,11 +486,12 @@ class ScreeningHistory:
                     symbol[f"perf_day{h}_pct"] = None
                 continue
             
+            # 正式データのみを使用（仮終値は除外）
             df = self._ohlcv_manager.get_ohlcv_data_with_temporary_flag(
                 symbol=symbol.get("symbol"),
                 timeframe="1d",
                 source="yahoo",
-                include_temporary=True
+                include_temporary=False
             )
             if df is None or df.empty:
                 for h in horizons:
@@ -481,6 +499,7 @@ class ScreeningHistory:
                     symbol[f"perf_day{h}_pct"] = None
                 continue
             
+            # 実行日より後の正式データのみを取得
             future_df = df[df.index.date > exec_date] if exec_date else df
             future_dates = list(future_df.index.date)
             
@@ -534,6 +553,284 @@ class ScreeningHistory:
             "valid_counts": valid_counts,
             "win_rates": summary
         }
+    
+    def _calculate_all_symbols_performance(
+        self,
+        executed_date: date,
+        horizons: Tuple[int, int, int] = (1, 2, 3)
+    ) -> Dict:
+        """
+        全銘柄（JPX400全体）のパフォーマンスを計算
+        
+        まずデータベースから取得を試み、存在しない場合のみ計算して保存します。
+        
+        Args:
+            executed_date: スクリーニング実行日（date型）
+            horizons: 計算する営業日オフセット
+            
+        Returns:
+            dict: 勝率集計とサマリー（_calculate_future_performanceと同じ形式）
+        """
+        date_str = executed_date.isoformat()
+        
+        # データベースから取得を試みる
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                cursor.execute("""
+                    SELECT performance_json
+                    FROM all_symbols_performance
+                    WHERE date = ?
+                """, (date_str,))
+                row = cursor.fetchone()
+                if row:
+                    # データベースから取得できた場合
+                    try:
+                        performance_data = json.loads(row['performance_json'])
+                        # JSONから読み込んだ場合、win_ratesのキーが文字列になっている可能性があるため、整数キーに変換
+                        if 'win_rates' in performance_data:
+                            win_rates_original = performance_data['win_rates']
+                            win_rates_normalized = {}
+                            for key, value in win_rates_original.items():
+                                # 文字列キーを整数に変換
+                                try:
+                                    int_key = int(key)
+                                    win_rates_normalized[int_key] = value
+                                except (ValueError, TypeError):
+                                    # 変換できない場合はそのまま
+                                    win_rates_normalized[key] = value
+                            performance_data['win_rates'] = win_rates_normalized
+                        
+                        # データが有効か確認（win_ratesが存在するか）
+                        if 'win_rates' in performance_data:
+                            # win_ratesに有効なデータがあるか確認
+                            # JSONから読み込んだ場合、キーが文字列になっている可能性があるため、両方チェック
+                            has_valid_data = False
+                            win_rates = performance_data.get('win_rates', {})
+                            
+                            # デバッグ用：win_ratesの内容を出力
+                            print(f"[DEBUG] データベースから取得したwin_rates keys: {list(win_rates.keys())}, 型: {[type(k) for k in win_rates.keys()]}")
+                            
+                            for h in horizons:
+                                # 整数キーと文字列キーの両方をチェック
+                                h_key = h
+                                h_str_key = str(h)
+                                win_rate_info = None
+                                if h_key in win_rates:
+                                    win_rate_info = win_rates[h_key]
+                                    print(f"[DEBUG] 整数キー {h_key} で取得: {win_rate_info}")
+                                elif h_str_key in win_rates:
+                                    win_rate_info = win_rates[h_str_key]
+                                    print(f"[DEBUG] 文字列キー {h_str_key} で取得: {win_rate_info}")
+                                
+                                if win_rate_info:
+                                    total = win_rate_info.get('total', 0)
+                                    print(f"[DEBUG] horizon {h}: total={total}, win={win_rate_info.get('win', 0)}, rate={win_rate_info.get('rate')}")
+                                    if total > 0:
+                                        has_valid_data = True
+                                        break
+                            
+                            if has_valid_data:
+                                print(f"[全銘柄パフォーマンス] データベースから取得: {date_str}")
+                                return performance_data
+                            else:
+                                print(f"[WARN] 全銘柄パフォーマンスデータが空: {date_str} (有効なデータがありません)")
+                                # デバッグ用：win_ratesの内容を詳細に出力
+                                for h in horizons:
+                                    h_str_key = str(h)
+                                    if h_str_key in win_rates:
+                                        info = win_rates[h_str_key]
+                                        print(f"[DEBUG] horizon {h} (key='{h_str_key}'): {info}")
+                        else:
+                            print(f"[WARN] 全銘柄パフォーマンスデータが不正: {date_str} (win_ratesが存在しません)")
+                    except json.JSONDecodeError as e:
+                        print(f"[WARN] 全銘柄パフォーマンスJSON解析エラー: {date_str}, {e}")
+                        # JSON解析エラーの場合は再計算
+                else:
+                    print(f"[全銘柄パフォーマンス] データベースに存在しません: {date_str} (検索条件: date='{date_str}')")
+        except Exception as e:
+            print(f"[WARN] 全銘柄パフォーマンス取得エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            # エラーが発生した場合は計算を続行
+        
+        # データベースに存在しない場合は計算
+        try:
+            # JPX400全銘柄リストを取得
+            all_symbols = self._jpx400_manager.load_symbols()
+            if not all_symbols:
+                print("[全銘柄パフォーマンス] JPX400銘柄リストが空です")
+                return {"win_rates": {}}
+            
+            print(f"[全銘柄パフォーマンス] {executed_date}の全銘柄パフォーマンスを計算中... ({len(all_symbols)}銘柄)")
+            
+            # 各銘柄のデータを準備（price_at_screeningは実行日の終値を使用）
+            symbols_data = []
+            executed_at_str = executed_date.isoformat()
+            
+            for symbol in all_symbols:
+                try:
+                    # 正式データのみを使用（仮終値は除外）
+                    df = self._ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                        symbol=symbol,
+                        timeframe="1d",
+                        source="yahoo",
+                        include_temporary=False
+                    )
+                    if df is None or df.empty:
+                        continue
+                    
+                    # 実行日以前のデータを取得
+                    past_df = df[df.index.date <= executed_date]
+                    if past_df.empty:
+                        continue
+                    
+                    # 実行日の終値を取得（なければ最新の終値）
+                    latest_row = past_df.iloc[-1]
+                    price_at_sc = float(latest_row['close'])
+                    
+                    if price_at_sc > 0:
+                        symbols_data.append({
+                            "symbol": symbol,
+                            "price_at_screening": price_at_sc
+                        })
+                except Exception as e:
+                    # 個別の銘柄でエラーが発生しても処理を継続
+                    continue
+            
+            if not symbols_data:
+                print(f"[全銘柄パフォーマンス] 有効な銘柄データがありません")
+                result = {"win_rates": {}}
+                # 空の結果もデータベースに保存（次回以降の再計算を避けるため）
+                try:
+                    with sqlite3.connect(self.db_path) as conn:
+                        cursor = conn.cursor()
+                        performance_json = json.dumps(result, ensure_ascii=False, default=str)
+                        cursor.execute("""
+                            INSERT OR REPLACE INTO all_symbols_performance (date, performance_json)
+                            VALUES (?, ?)
+                        """, (date_str, performance_json))
+                        conn.commit()
+                        print(f"[全銘柄パフォーマンス] 空の結果をデータベースに保存: {date_str}")
+                except Exception as e:
+                    print(f"[WARN] 全銘柄パフォーマンス保存エラー: {e}")
+                    import traceback
+                    traceback.print_exc()
+                return result
+            
+            print(f"[全銘柄パフォーマンス] {len(symbols_data)}銘柄のデータを取得しました")
+            
+            # 既存の_calculate_future_performanceメソッドを使用して計算
+            result = self._calculate_future_performance(
+                symbols_data,
+                executed_at_str,
+                horizons
+            )
+            
+            # データベースに保存
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    performance_json = json.dumps(result, ensure_ascii=False, default=str)
+                    # 計算結果のサマリーをログに出力
+                    win_rates_summary = {}
+                    for h in horizons:
+                        if h in result.get('win_rates', {}):
+                            info = result['win_rates'][h]
+                            rate = info.get('rate')
+                            rate_str = f"{rate:.1f}%" if rate is not None else "N/A"
+                            win_rates_summary[h] = f"{info.get('win', 0)}/{info.get('total', 0)} ({rate_str})"
+                    print(f"[全銘柄パフォーマンス] 保存前チェック: date={date_str}, json長={len(performance_json)}, 結果={win_rates_summary}")
+                    
+                    cursor.execute("""
+                        INSERT OR REPLACE INTO all_symbols_performance (date, performance_json)
+                        VALUES (?, ?)
+                    """, (date_str, performance_json))
+                    conn.commit()
+                    
+                    # 保存確認のため、再度取得して確認
+                    # row_factoryを設定してRowオブジェクトとして取得
+                    conn.row_factory = sqlite3.Row
+                    cursor = conn.cursor()
+                    cursor.execute("""
+                        SELECT performance_json
+                        FROM all_symbols_performance
+                        WHERE date = ?
+                    """, (date_str,))
+                    saved_row = cursor.fetchone()
+                    if saved_row:
+                        # 保存されたデータを確認
+                        saved_data = json.loads(saved_row['performance_json'])
+                        saved_win_rates = saved_data.get('win_rates', {})
+                        print(f"[全銘柄パフォーマンス] データベースに保存成功: {date_str} (保存確認: win_rates keys={list(saved_win_rates.keys())})")
+                    else:
+                        print(f"[ERROR] 全銘柄パフォーマンス保存失敗: {date_str} (保存後に取得できませんでした)")
+            except Exception as e:
+                print(f"[ERROR] 全銘柄パフォーマンス保存エラー: {e}")
+                import traceback
+                traceback.print_exc()
+                # エラーが発生しても計算結果は返す（次回再計算される）
+            
+            print(f"[全銘柄パフォーマンス] 計算完了: {executed_date}")
+            return result
+            
+        except Exception as e:
+            print(f"[ERROR] 全銘柄パフォーマンス計算エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return {"win_rates": {}}
+    
+    def delete_all_symbols_performance(self) -> bool:
+        """
+        全銘柄パフォーマンスデータをすべて削除
+        
+        Returns:
+            bool: 削除成功かどうか
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM all_symbols_performance")
+                deleted_count = cursor.rowcount
+                conn.commit()
+                print(f"[全銘柄パフォーマンス] {deleted_count}件のデータを削除しました")
+                return True
+        except Exception as e:
+            print(f"[ERROR] 全銘柄パフォーマンス削除エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+    
+    def recalculate_all_symbols_performance_for_dates(self, dates: List[date]) -> Dict[date, Dict]:
+        """
+        指定された日付の全銘柄パフォーマンスを再計算して保存
+        
+        Args:
+            dates: 再計算する日付のリスト
+            
+        Returns:
+            Dict[date, Dict]: 日付ごとの計算結果
+        """
+        results = {}
+        for target_date in dates:
+            print(f"[全銘柄パフォーマンス] 再計算開始: {target_date}")
+            # まず該当日付のデータを削除
+            try:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    date_str = target_date.isoformat()
+                    cursor.execute("DELETE FROM all_symbols_performance WHERE date = ?", (date_str,))
+                    conn.commit()
+                    print(f"[全銘柄パフォーマンス] {target_date}のデータを削除しました")
+            except Exception as e:
+                print(f"[WARN] {target_date}のデータ削除エラー: {e}")
+            
+            # 再計算
+            result = self._calculate_all_symbols_performance(target_date)
+            results[target_date] = result
+        
+        return results
     
     def delete_history(self, history_id: int) -> bool:
         """

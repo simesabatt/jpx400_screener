@@ -138,6 +138,15 @@ class DataManagementTab:
         )
         self.show_history_button.pack(side="left", padx=pad)
 
+        # 全銘柄勝率再計算ボタン（デバッグ用）
+        self.recalculate_all_symbols_button = ttk.Button(
+            bottom_button_frame,
+            text="全銘柄勝率再計算(debug用)",
+            command=self.on_recalculate_all_symbols_performance,
+            width=25
+        )
+        self.recalculate_all_symbols_button.pack(side="left", padx=pad)
+
         # 説明ラベル
         info_text = (
             "【データ管理】\n\n"
@@ -1031,86 +1040,176 @@ class DataManagementTab:
             tree.column("+3日平均", width=100, anchor="center")
             tree.column("+3日中央値", width=100, anchor="center")
             
+            # タグ設定: 全銘柄行には特別なタグを設定
+            tree.tag_configure("all_symbols", background="#E8E8E8")  # 薄いグレー背景
+            
+            # 履歴を日付でグループ化
+            from collections import defaultdict
+            history_by_date = defaultdict(list)
             for history in history_list:
-                executed_at = history['executed_at']
                 try:
-                    dt = datetime.fromisoformat(executed_at)
-                    executed_at_str = dt.strftime('%Y/%m/%d %H:%M')
+                    dt = datetime.fromisoformat(history['executed_at'])
+                    history_date = dt.date()
+                    history_by_date[history_date].append(history)
                 except:
-                    executed_at_str = executed_at
+                    # 日付が取得できない場合はスキップ
+                    continue
+            
+            # 日付でソート（新しい日付から）
+            sorted_dates = sorted(history_by_date.keys(), reverse=True)
+            
+            # 全銘柄パフォーマンスのキャッシュ（日付ごと）
+            all_symbols_perf_cache = {}
+            
+            # 日付ごとに処理
+            for history_date in sorted_dates:
+                histories = history_by_date[history_date]
                 
-                # 条件を日本語に変換
-                conditions = history.get('conditions', {})
-                condition_texts = []
-                if conditions.get('check_condition1'):
-                    condition_texts.append("移動平均線順序")
-                if conditions.get('check_condition2'):
-                    condition_texts.append("陽線連続")
-                if conditions.get('check_condition3'):
-                    condition_texts.append("5MA上向き")
-                if conditions.get('check_condition4'):
-                    condition_texts.append("25MA上向き")
-                if conditions.get('check_condition5'):
-                    condition_texts.append("75MA上向き")
-                if conditions.get('check_condition6'):
-                    condition_texts.append("200MA上向き")
-                if conditions.get('check_golden_cross_5_25'):
-                    mode = conditions.get('golden_cross_mode', 'just_crossed')
-                    mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
-                    condition_texts.append(f"5/25MA GC({mode_text})")
-                if conditions.get('check_golden_cross_25_75'):
-                    mode = conditions.get('golden_cross_mode', 'just_crossed')
-                    mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
-                    condition_texts.append(f"25/75MA GC({mode_text})")
-                if conditions.get('use_macd_kd_filter'):
-                    window = conditions.get('macd_kd_window', 1)
-                    condition_texts.append(f"MACD/KD近接(±{window}営業日)")
-                
-                condition_str = ", ".join(condition_texts) if condition_texts else "条件なし"
-                
-                # 勝率の整形
-                def fmt_rate(h: int) -> str:
-                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                    total = info.get('total')
-                    rate = info.get('rate')
-                    win = info.get('win')
-                    if total and rate is not None:
-                        return f"{win}/{total} ({rate:.1f}%)"
-                    return "N/A"
-
-                def fmt_avg(h: int) -> str:
-                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                    avg = info.get('avg')
-                    if avg is None:
+                # その日のスクリーニング履歴を表示
+                for history in histories:
+                    executed_at = history['executed_at']
+                    try:
+                        dt = datetime.fromisoformat(executed_at)
+                        executed_at_str = dt.strftime('%Y/%m/%d %H:%M')
+                    except:
+                        executed_at_str = executed_at
+                    
+                    # 条件を日本語に変換
+                    conditions = history.get('conditions', {})
+                    condition_texts = []
+                    if conditions.get('check_condition1'):
+                        condition_texts.append("移動平均線順序")
+                    if conditions.get('check_condition2'):
+                        condition_texts.append("陽線連続")
+                    if conditions.get('check_condition3'):
+                        condition_texts.append("5MA上向き")
+                    if conditions.get('check_condition4'):
+                        condition_texts.append("25MA上向き")
+                    if conditions.get('check_condition5'):
+                        condition_texts.append("75MA上向き")
+                    if conditions.get('check_condition6'):
+                        condition_texts.append("200MA上向き")
+                    if conditions.get('check_golden_cross_5_25'):
+                        mode = conditions.get('golden_cross_mode', 'just_crossed')
+                        mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
+                        condition_texts.append(f"5/25MA GC({mode_text})")
+                    if conditions.get('check_golden_cross_25_75'):
+                        mode = conditions.get('golden_cross_mode', 'just_crossed')
+                        mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
+                        condition_texts.append(f"25/75MA GC({mode_text})")
+                    if conditions.get('use_macd_kd_filter'):
+                        window = conditions.get('macd_kd_window', 1)
+                        condition_texts.append(f"MACD/KD近接(±{window}営業日)")
+                    
+                    condition_str = ", ".join(condition_texts) if condition_texts else "条件なし"
+                    
+                    # 勝率の整形
+                    def fmt_rate(h: int) -> str:
+                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                        total = info.get('total')
+                        rate = info.get('rate')
+                        win = info.get('win')
+                        if total and rate is not None:
+                            return f"{win}/{total} ({rate:.1f}%)"
                         return "N/A"
-                    return f"{avg:+.2f}%"
 
-                def fmt_med(h: int) -> str:
-                    info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                    med = info.get('median')
-                    if med is None:
+                    def fmt_avg(h: int) -> str:
+                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                        avg = info.get('avg')
+                        if avg is None:
+                            return "N/A"
+                        return f"{avg:+.2f}%"
+
+                    def fmt_med(h: int) -> str:
+                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
+                        med = info.get('median')
+                        if med is None:
+                            return "N/A"
+                        return f"{med:+.2f}%"
+
+                    tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            executed_at_str,
+                            f"{history['symbol_count']}件",
+                            condition_str,
+                            fmt_rate(1), fmt_avg(1), fmt_med(1),
+                            fmt_rate(2), fmt_avg(2), fmt_med(2),
+                            fmt_rate(3), fmt_avg(3), fmt_med(3)
+                        ),
+                        tags=(history['id'],)
+                    )
+                
+                # その日の全銘柄パフォーマンス行を挿入（日付の変わり目）
+                try:
+                    # キャッシュをチェック
+                    if history_date not in all_symbols_perf_cache:
+                        all_symbols_perf = history_manager._calculate_all_symbols_performance(
+                            history_date,
+                            horizons=(1, 2, 3)
+                        )
+                        all_symbols_perf_cache[history_date] = all_symbols_perf
+                    else:
+                        all_symbols_perf = all_symbols_perf_cache[history_date]
+                    
+                    # 全銘柄行のフォーマット関数
+                    def fmt_all_rate(h: int) -> str:
+                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                        total = info.get('total')
+                        rate = info.get('rate')
+                        win = info.get('win')
+                        if total and rate is not None:
+                            return f"{win}/{total} ({rate:.1f}%)"
                         return "N/A"
-                    return f"{med:+.2f}%"
 
-                tree.insert(
-                    "",
-                    "end",
-                    values=(
-                        executed_at_str,
-                        f"{history['symbol_count']}件",
-                        condition_str,
-                        fmt_rate(1), fmt_avg(1), fmt_med(1),
-                        fmt_rate(2), fmt_avg(2), fmt_med(2),
-                        fmt_rate(3), fmt_avg(3), fmt_med(3)
-                    ),
-                    tags=(history['id'],)
-                )
+                    def fmt_all_avg(h: int) -> str:
+                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                        avg = info.get('avg')
+                        if avg is None:
+                            return "N/A"
+                        return f"{avg:+.2f}%"
+
+                    def fmt_all_med(h: int) -> str:
+                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                        med = info.get('median')
+                        if med is None:
+                            return "N/A"
+                        return f"{med:+.2f}%"
+                    
+                    date_str = history_date.strftime('%Y/%m/%d')
+                    tree.insert(
+                        "",
+                        "end",
+                        values=(
+                            f"全銘柄({date_str})",
+                            "全銘柄",
+                            "-",
+                            fmt_all_rate(1), fmt_all_avg(1), fmt_all_med(1),
+                            fmt_all_rate(2), fmt_all_avg(2), fmt_all_med(2),
+                            fmt_all_rate(3), fmt_all_avg(3), fmt_all_med(3)
+                        ),
+                        tags=("all_symbols",)  # 特別なタグで背景色を変更
+                    )
+                except Exception as e:
+                    # 全銘柄パフォーマンス計算でエラーが発生しても処理を継続
+                    print(f"[WARN] 全銘柄パフォーマンス計算エラー ({history_date}): {e}")
+                    import traceback
+                    traceback.print_exc()
             
             def on_double_click(event):
                 item = tree.selection()[0] if tree.selection() else None
                 if item:
-                    history_id = int(tree.item(item)['tags'][0])
-                    self._show_history_detail(history_id, history_window)
+                    tags = tree.item(item)['tags']
+                    # 全銘柄行はクリックできないようにする
+                    if tags and tags[0] == "all_symbols":
+                        return
+                    try:
+                        history_id = int(tags[0])
+                        self._show_history_detail(history_id, history_window)
+                    except (ValueError, IndexError):
+                        # 履歴IDが取得できない場合は何もしない
+                        pass
             
             tree.bind("<Double-1>", on_double_click)
             
@@ -1124,7 +1223,18 @@ class DataManagementTab:
                     messagebox.showwarning("警告", "削除する履歴を選択してください。", parent=history_window)
                     return
                 
-                history_id = int(tree.item(selected_item)['tags'][0])
+                tags = tree.item(selected_item)['tags']
+                # 全銘柄行は削除できないようにする
+                if tags and tags[0] == "all_symbols":
+                    messagebox.showwarning("警告", "全銘柄行は削除できません。", parent=history_window)
+                    return
+                
+                try:
+                    history_id = int(tags[0])
+                except (ValueError, IndexError):
+                    messagebox.showerror("エラー", "履歴IDが取得できませんでした。", parent=history_window)
+                    return
+                
                 executed_at_str = tree.item(selected_item)['values'][0]
                 
                 # 確認ダイアログ
@@ -1156,6 +1266,97 @@ class DataManagementTab:
             print(f"[ERROR] スクリーニング履歴表示エラー: {e}")
             print(f"[ERROR] 詳細: {error_detail}")
             messagebox.showerror("エラー", f"履歴表示でエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。")
+    
+    def on_recalculate_all_symbols_performance(self):
+        """全銘柄パフォーマンスを再計算（デバッグ用）"""
+        try:
+            from src.screening.screening_history import ScreeningHistory
+            from datetime import date
+            from collections import defaultdict
+            
+            # 確認ダイアログ
+            result = messagebox.askyesno(
+                "確認",
+                "全銘柄パフォーマンスデータを削除して再計算しますか？\n\n"
+                "この処理には時間がかかる場合があります。",
+                parent=self.parent
+            )
+            
+            if not result:
+                return
+            
+            history_manager = ScreeningHistory(self.db_path)
+            
+            # 既存の全銘柄パフォーマンスデータを削除
+            print("[全銘柄パフォーマンス再計算] 既存データを削除します...")
+            self.status_var.set("状態: 全銘柄パフォーマンスデータを削除中...")
+            self.recalculate_all_symbols_button.config(state="disabled")
+            
+            if not history_manager.delete_all_symbols_performance():
+                messagebox.showerror("エラー", "データの削除に失敗しました。", parent=self.parent)
+                self.status_var.set("状態: 待機中")
+                self.recalculate_all_symbols_button.config(state="normal")
+                return
+            
+            # スクリーニング履歴から日付を取得
+            history_list = history_manager.get_history_list(limit=100)
+            if not history_list:
+                messagebox.showinfo("情報", "スクリーニング履歴がありません。", parent=self.parent)
+                self.status_var.set("状態: 待機中")
+                self.recalculate_all_symbols_button.config(state="normal")
+                return
+            
+            # 日付でグループ化
+            history_by_date = defaultdict(list)
+            for history in history_list:
+                try:
+                    dt = datetime.fromisoformat(history['executed_at'])
+                    history_date = dt.date()
+                    history_by_date[history_date].append(history)
+                except:
+                    continue
+            
+            # 再計算する日付のリスト
+            dates_to_recalculate = sorted(history_by_date.keys(), reverse=True)
+            
+            if not dates_to_recalculate:
+                messagebox.showinfo("情報", "再計算する日付がありません。", parent=self.parent)
+                self.status_var.set("状態: 待機中")
+                self.recalculate_all_symbols_button.config(state="normal")
+                return
+            
+            # 再計算実行
+            print(f"[全銘柄パフォーマンス再計算] {len(dates_to_recalculate)}日分を再計算します...")
+            self.status_var.set(f"状態: 全銘柄パフォーマンス再計算中... (0/{len(dates_to_recalculate)})")
+            
+            results = history_manager.recalculate_all_symbols_performance_for_dates(dates_to_recalculate)
+            
+            # 結果を表示
+            success_count = sum(1 for r in results.values() if r.get('win_rates'))
+            messagebox.showinfo(
+                "完了",
+                f"全銘柄パフォーマンスの再計算が完了しました。\n\n"
+                f"対象日数: {len(dates_to_recalculate)}日\n"
+                f"成功: {success_count}日",
+                parent=self.parent
+            )
+            
+            self.status_var.set("状態: 待機中")
+            self.recalculate_all_symbols_button.config(state="normal")
+            
+        except Exception as e:
+            import traceback
+            error_detail = traceback.format_exc()
+            print(f"[ERROR] 全銘柄パフォーマンス再計算エラー: {e}")
+            print(f"[ERROR] 詳細: {error_detail}")
+            messagebox.showerror(
+                "エラー",
+                f"全銘柄パフォーマンス再計算でエラーが発生しました:\n{e}\n\n"
+                "詳細はコンソールを確認してください。",
+                parent=self.parent
+            )
+            self.status_var.set("状態: 待機中")
+            self.recalculate_all_symbols_button.config(state="normal")
     
     def _show_history_detail(self, history_id: int, parent_window):
         """スクリーニング履歴の詳細を表示"""
