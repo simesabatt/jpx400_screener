@@ -16,6 +16,7 @@ from typing import Dict, List, Optional, Tuple
 import sqlite3
 from src.data_collector.ohlcv_data_manager import OHLCVDataManager
 from src.screening.jpx400_manager import JPX400Manager
+from src.data_collector.financial_metrics_manager import FinancialMetricsManager
 
 
 class SectorFlowAnalyzer:
@@ -31,6 +32,7 @@ class SectorFlowAnalyzer:
         self.db_path = db_path
         self.ohlcv_manager = OHLCVDataManager(db_path)
         self.jpx400_manager = JPX400Manager()
+        self.financial_metrics_manager = FinancialMetricsManager(db_path)
     
     def get_oldest_date(self) -> Optional[datetime]:
         """
@@ -410,6 +412,235 @@ class SectorFlowAnalyzer:
                 result_df[sector] = 0.0
         
         print(f"[SectorFlowAnalyzer] 1銘柄あたり売買代金を計算しました")
+        
+        return result_df
+    
+    def get_sector_financial_metrics(self) -> pd.DataFrame:
+        """
+        セクターごとの平均財務指標を取得
+        
+        Returns:
+            pd.DataFrame: セクター名と平均財務指標のデータ
+                列: 'sector'（セクター名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roe'
+        """
+        # JPX400銘柄リストを取得
+        symbols = self.jpx400_manager.load_symbols()
+        if not symbols:
+            print("[SectorFlowAnalyzer] JPX400銘柄リストが空です")
+            return pd.DataFrame()
+        
+        # セクター情報を一括取得
+        sectors_dict = self.ohlcv_manager.get_symbol_sectors(symbols)
+        
+        # 財務指標を一括取得
+        financial_metrics_dict = self.financial_metrics_manager.get_financial_metrics_batch(symbols)
+        
+        # セクターごとに財務指標を集計
+        sector_metrics: Dict[str, Dict[str, List[float]]] = {}
+        
+        for symbol in symbols:
+            sector = sectors_dict.get(symbol)
+            if not sector:
+                continue
+            
+            metrics = financial_metrics_dict.get(symbol, {})
+            if not metrics:
+                continue
+            
+            if sector not in sector_metrics:
+                sector_metrics[sector] = {
+                    'per': [],
+                    'pbr': [],
+                    'dividend_yield': [],
+                    'roa': [],
+                    'roe': []
+                }
+            
+            # NULL値でない指標のみ追加
+            if metrics.get('per') is not None:
+                sector_metrics[sector]['per'].append(metrics['per'])
+            if metrics.get('pbr') is not None:
+                sector_metrics[sector]['pbr'].append(metrics['pbr'])
+            if metrics.get('dividend_yield') is not None:
+                sector_metrics[sector]['dividend_yield'].append(metrics['dividend_yield'])
+            if metrics.get('roa') is not None:
+                sector_metrics[sector]['roa'].append(metrics['roa'])
+            if metrics.get('roe') is not None:
+                sector_metrics[sector]['roe'].append(metrics['roe'])
+        
+        if not sector_metrics:
+            print("[SectorFlowAnalyzer] 財務指標データが見つかりませんでした")
+            return pd.DataFrame()
+        
+        # 平均値を計算
+        result_data = []
+        for sector, metrics_list in sector_metrics.items():
+            result_data.append({
+                'sector': sector,
+                'avg_per': np.mean(metrics_list['per']) if metrics_list['per'] else None,
+                'avg_pbr': np.mean(metrics_list['pbr']) if metrics_list['pbr'] else None,
+                'avg_dividend_yield': np.mean(metrics_list['dividend_yield']) if metrics_list['dividend_yield'] else None,
+                'avg_roa': np.mean(metrics_list['roa']) if metrics_list['roa'] else None,
+                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None
+            })
+        
+        result_df = pd.DataFrame(result_data)
+        
+        print(f"[SectorFlowAnalyzer] セクター別平均財務指標: {len(result_df)}セクター")
+        
+        return result_df
+    
+    def get_sector_industry_financial_metrics(self) -> pd.DataFrame:
+        """
+        セクター・業種ごとの平均財務指標を取得
+        
+        Returns:
+            pd.DataFrame: セクター名、業種名、平均財務指標のデータ
+                列: 'sector'（セクター名）, 'industry'（業種名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roe'
+        """
+        # JPX400銘柄リストを取得
+        symbols = self.jpx400_manager.load_symbols()
+        if not symbols:
+            print("[SectorFlowAnalyzer] JPX400銘柄リストが空です")
+            return pd.DataFrame()
+        
+        # セクター情報と業種情報を一括取得
+        sectors_dict = self.ohlcv_manager.get_symbol_sectors(symbols)
+        industries_dict = self.ohlcv_manager.get_symbol_industries(symbols)
+        
+        # 財務指標を一括取得
+        financial_metrics_dict = self.financial_metrics_manager.get_financial_metrics_batch(symbols)
+        
+        # セクター・業種ごとに財務指標を集計
+        sector_industry_metrics: Dict[Tuple[str, str], Dict[str, List[float]]] = {}
+        
+        for symbol in symbols:
+            sector = sectors_dict.get(symbol)
+            industry = industries_dict.get(symbol)
+            
+            if not sector or not industry:
+                continue
+            
+            metrics = financial_metrics_dict.get(symbol, {})
+            if not metrics:
+                continue
+            
+            key = (sector, industry)
+            if key not in sector_industry_metrics:
+                sector_industry_metrics[key] = {
+                    'per': [],
+                    'pbr': [],
+                    'dividend_yield': [],
+                    'roa': [],
+                    'roe': []
+                }
+            
+            # NULL値でない指標のみ追加
+            if metrics.get('per') is not None:
+                sector_industry_metrics[key]['per'].append(metrics['per'])
+            if metrics.get('pbr') is not None:
+                sector_industry_metrics[key]['pbr'].append(metrics['pbr'])
+            if metrics.get('dividend_yield') is not None:
+                sector_industry_metrics[key]['dividend_yield'].append(metrics['dividend_yield'])
+            if metrics.get('roa') is not None:
+                sector_industry_metrics[key]['roa'].append(metrics['roa'])
+            if metrics.get('roe') is not None:
+                sector_industry_metrics[key]['roe'].append(metrics['roe'])
+        
+        if not sector_industry_metrics:
+            print("[SectorFlowAnalyzer] 財務指標データが見つかりませんでした")
+            return pd.DataFrame()
+        
+        # 平均値を計算
+        result_data = []
+        for (sector, industry), metrics_list in sector_industry_metrics.items():
+            result_data.append({
+                'sector': sector,
+                'industry': industry,
+                'avg_per': np.mean(metrics_list['per']) if metrics_list['per'] else None,
+                'avg_pbr': np.mean(metrics_list['pbr']) if metrics_list['pbr'] else None,
+                'avg_dividend_yield': np.mean(metrics_list['dividend_yield']) if metrics_list['dividend_yield'] else None,
+                'avg_roa': np.mean(metrics_list['roa']) if metrics_list['roa'] else None,
+                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None
+            })
+        
+        result_df = pd.DataFrame(result_data)
+        
+        print(f"[SectorFlowAnalyzer] セクター・業種別平均財務指標: {len(result_df)}件")
+        
+        return result_df
+    
+    def get_industry_symbols(self, sector: str, industry: str) -> List[str]:
+        """
+        指定されたセクター・業種に属する銘柄コードのリストを取得
+        
+        Args:
+            sector: セクター名
+            industry: 業種名
+        
+        Returns:
+            List[str]: 銘柄コードのリスト
+        """
+        # JPX400銘柄リストを取得
+        symbols = self.jpx400_manager.load_symbols()
+        if not symbols:
+            print("[SectorFlowAnalyzer] JPX400銘柄リストが空です")
+            return []
+        
+        # セクター情報と業種情報を一括取得
+        sectors_dict = self.ohlcv_manager.get_symbol_sectors(symbols)
+        industries_dict = self.ohlcv_manager.get_symbol_industries(symbols)
+        
+        # 指定されたセクター・業種に属する銘柄を抽出
+        industry_symbols = [
+            s for s in symbols
+            if sectors_dict.get(s) == sector and industries_dict.get(s) == industry
+        ]
+        
+        return sorted(industry_symbols)
+    
+    def get_industry_symbols_with_metrics(self, sector: str, industry: str) -> pd.DataFrame:
+        """
+        業種に属する銘柄とその財務指標を取得
+        
+        Args:
+            sector: セクター名
+            industry: 業種名
+        
+        Returns:
+            pd.DataFrame: 銘柄情報と財務指標のデータ
+                列: 'symbol'（銘柄コード）, 'name'（銘柄名）, 'per', 'pbr', 'dividend_yield', 'roe'
+        """
+        # 業種に属する銘柄を取得
+        symbols = self.get_industry_symbols(sector, industry)
+        if not symbols:
+            return pd.DataFrame()
+        
+        # 銘柄名を一括取得
+        symbol_names_dict = self.ohlcv_manager.get_symbol_names(symbols)
+        
+        # 財務指標を一括取得
+        financial_metrics_dict = self.financial_metrics_manager.get_financial_metrics_batch(symbols)
+        
+        # 結果をDataFrameに変換
+        result_data = []
+        for symbol in symbols:
+            name = symbol_names_dict.get(symbol, symbol)
+            metrics = financial_metrics_dict.get(symbol, {})
+            
+            result_data.append({
+                'symbol': symbol,
+                'name': name,
+                'per': metrics.get('per'),
+                'pbr': metrics.get('pbr'),
+                'dividend_yield': metrics.get('dividend_yield'),
+                'roe': metrics.get('roe')
+            })
+        
+        result_df = pd.DataFrame(result_data)
+        
+        # 銘柄コードでソート
+        result_df = result_df.sort_values('symbol')
         
         return result_df
 

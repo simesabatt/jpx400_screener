@@ -279,7 +279,7 @@ class ScreeningUI:
             result_window.title("スクリーニング結果（履歴）")
         else:
             result_window.title("スクリーニング結果")
-        result_window.geometry("1150x600")
+        result_window.geometry("1800x600")
         
         # メインフレーム
         main_frame = ttk.Frame(result_window)
@@ -334,12 +334,13 @@ class ScreeningUI:
                 "SC時価格", "SC時出来高",
                 "翌1日", "翌2日", "翌3日",
                 "現在価格", "最新出来高",
-                "出来高σ(20日)",
+                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         else:
             columns = (
-                "銘柄コード", "銘柄名", "セクター", "業種", "現在価格", "最新出来高", "出来高σ(20日)", "状態",
+                "銘柄コード", "銘柄名", "セクター", "業種",
+                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "状態",
                 "GC 5/25", "GC 25/75",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
@@ -444,6 +445,11 @@ class ScreeningUI:
         tree.heading("銘柄名", text="銘柄名")
         tree.heading("セクター", text="セクター")
         tree.heading("業種", text="業種")
+        tree.heading("PER", text="PER")
+        tree.heading("PBR", text="PBR")
+        tree.heading("利回り", text="利回り")
+        tree.heading("ROA", text="ROA")
+        tree.heading("ROE", text="ROE")
         
         if is_history:
             tree.heading("SC時価格", text="SC時価格")
@@ -471,41 +477,51 @@ class ScreeningUI:
             tree.heading("200MA乖離率", text="200MA乖離率(%)")
         
         # 列幅の設定
-        tree.column("銘柄コード", width=100, anchor="center")
-        tree.column("銘柄名", width=200, anchor="w")
-        tree.column("セクター", width=150, anchor="w")
-        tree.column("業種", width=200, anchor="w")
+        tree.column("銘柄コード", width=70, anchor="center")
+        tree.column("銘柄名", width=170, anchor="w")
+        tree.column("セクター", width=120, anchor="w")
+        tree.column("業種", width=170, anchor="w")
+        tree.column("PER", width=50, anchor="e")
+        tree.column("PBR", width=50, anchor="e")
+        tree.column("利回り", width=60, anchor="e")
+        tree.column("ROA", width=50, anchor="e")
+        tree.column("ROE", width=50, anchor="e")
         
         if is_history:
-            tree.column("SC時価格", width=100, anchor="e")
-            tree.column("SC時出来高", width=120, anchor="e")
-            tree.column("翌1日", width=110, anchor="center")
-            tree.column("翌2日", width=110, anchor="center")
-            tree.column("翌3日", width=110, anchor="center")
-            tree.column("現在価格", width=100, anchor="e")
-            tree.column("最新出来高", width=120, anchor="e")
+            tree.column("SC時価格", width=70, anchor="e")
+            tree.column("SC時出来高", width=90, anchor="e")
+            tree.column("翌1日", width=80, anchor="center")
+            tree.column("翌2日", width=80, anchor="center")
+            tree.column("翌3日", width=80, anchor="center")
+            tree.column("現在価格", width=70, anchor="e")
+            tree.column("最新出来高", width=90, anchor="e")
         else:
-            tree.column("現在価格", width=100, anchor="e")
-            tree.column("最新出来高", width=120, anchor="e")
+            tree.column("現在価格", width=70, anchor="e")
+            tree.column("最新出来高", width=90, anchor="e")
         
-        tree.column("出来高σ(20日)", width=120, anchor="e")
+        tree.column("出来高σ(20日)", width=90, anchor="e")
         if is_history:
-            tree.column("5MA乖離率", width=110, anchor="e")
-            tree.column("25MA乖離率", width=110, anchor="e")
-            tree.column("75MA乖離率", width=110, anchor="e")
-            tree.column("200MA乖離率", width=110, anchor="e")
+            tree.column("5MA乖離率", width=80, anchor="e")
+            tree.column("25MA乖離率", width=80, anchor="e")
+            tree.column("75MA乖離率", width=80, anchor="e")
+            tree.column("200MA乖離率", width=80, anchor="e")
         else:
-            tree.column("状態", width=100, anchor="center")
-            tree.column("GC 5/25", width=110, anchor="center")
-            tree.column("GC 25/75", width=110, anchor="center")
-            tree.column("5MA乖離率", width=110, anchor="e")
-            tree.column("25MA乖離率", width=110, anchor="e")
-            tree.column("75MA乖離率", width=110, anchor="e")
-            tree.column("200MA乖離率", width=110, anchor="e")
+            tree.column("状態", width=70, anchor="center")
+            tree.column("GC 5/25", width=80, anchor="center")
+            tree.column("GC 25/75", width=80, anchor="center")
+            tree.column("5MA乖離率", width=80, anchor="e")
+            tree.column("25MA乖離率", width=80, anchor="e")
+            tree.column("75MA乖離率", width=80, anchor="e")
+            tree.column("200MA乖離率", width=80, anchor="e")
     
     def _populate_treeview_data(self, tree, results, ohlcv_manager, is_history):
         """Treeviewにデータを追加"""
         symbol_list = [r['symbol'] for r in results]
+        
+        # 財務指標を取得
+        from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+        financial_metrics_manager = FinancialMetricsManager(self.db_path)
+        financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(symbol_list)
         
         if is_history:
             # 履歴表示の場合は、resultに既に含まれている値を使用
@@ -534,6 +550,14 @@ class ScreeningUI:
             name = symbol_names.get(symbol, "（未取得）")
             sector = symbol_sectors.get(symbol, "（未取得）")
             industry = symbol_industries.get(symbol, "（未取得）")
+            
+            # 財務指標を取得
+            metrics = financial_metrics_dict.get(symbol, {}) if financial_metrics_dict else {}
+            per = f"{metrics.get('per', 0):.1f}" if metrics.get('per') is not None else "-"
+            pbr = f"{metrics.get('pbr', 0):.2f}" if metrics.get('pbr') is not None else "-"
+            dividend_yield = f"{metrics.get('dividend_yield', 0):.2f}%" if metrics.get('dividend_yield') is not None else "-"
+            roa = f"{metrics.get('roa', 0):.2f}%" if metrics.get('roa') is not None else "-"
+            roe = f"{metrics.get('roe', 0):.2f}%" if metrics.get('roe') is not None else "-"
             
             # 価格と出来高の取得
             if is_history:
@@ -656,7 +680,12 @@ class ScreeningUI:
                         perf3,
                         f"{current_price:.2f}",  # 現在価格
                         current_volume_str,  # 最新出来高
-                        sigma_str,
+                        sigma_str,  # 出来高σ(20日)
+                        per,
+                        pbr,
+                        dividend_yield,
+                        roa,
+                        roe,
                         ma5_str,
                         ma25_str,
                         ma75_str,
@@ -675,7 +704,12 @@ class ScreeningUI:
                         industry,
                         f"{price:.2f}",
                         current_volume_str,
-                        sigma_str,
+                        sigma_str,  # 出来高σ(20日)
+                        per,
+                        pbr,
+                        dividend_yield,
+                        roa,
+                        roe,
                         status,
                         gc5_25_str,
                         gc25_75_str,

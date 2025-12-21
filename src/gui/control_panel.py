@@ -188,10 +188,14 @@ class ControlPanel(tk.Tk):
             sentiment_calc_callback = lambda: self.sentiment_tab.auto_calculate_sentiment_score()
             sentiment_eval_callback = lambda: self.sentiment_tab.auto_record_and_evaluate_sentiment()
             
+            # 財務指標取得の自動実行コールバック
+            financial_metrics_callback = lambda: self.market_conditions.auto_fetch_financial_metrics()
+            
             self.auto_task_manager.start(
                 jpx_collect_callback=jpx_callback,
                 sentiment_calc_callback=sentiment_calc_callback,
-                sentiment_eval_callback=sentiment_eval_callback
+                sentiment_eval_callback=sentiment_eval_callback,
+                financial_metrics_callback=financial_metrics_callback
             )
         except Exception as e:
             print(f"[警告] 自動タスクの起動に失敗: {e}")

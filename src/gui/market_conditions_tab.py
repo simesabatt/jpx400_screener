@@ -198,14 +198,38 @@ class MarketConditionsTab:
         sector_count_frame = ttk.LabelFrame(control_frame, text="セクター別登録銘柄数", padding=pad)
         sector_count_frame.pack(fill="x", pady=pad)
         
+        # 財務指標取得ボタンと説明文のフレーム
+        info_frame = ttk.Frame(sector_count_frame)
+        info_frame.pack(fill="x", pady=(0, pad))
+        
+        # 財務指標取得ボタン
+        fetch_metrics_button = ttk.Button(
+            info_frame,
+            text="財務指標を取得",
+            command=self._on_fetch_financial_metrics
+        )
+        fetch_metrics_button.pack(side="left", padx=(0, pad))
+        
+        # 最新実施日時を表示するラベル
+        self.last_fetch_time_label = ttk.Label(
+            info_frame,
+            text="最新実施: 未実行",
+            font=("", 9),
+            foreground="gray"
+        )
+        self.last_fetch_time_label.pack(side="left", padx=(0, pad))
+        
+        # 最新実施日時を読み込んで表示
+        self._update_last_fetch_time_display()
+        
         # 説明文を追加
         info_label = ttk.Label(
-            sector_count_frame,
+            info_frame,
             text="※ セクター行をダブルクリックすると、そのセクターの銘柄一覧が表示されます\n※ 業種行をダブルクリックすると、そのセクター・業種の銘柄一覧が表示されます\n※ セクター行をクリックすると、業種が展開/折りたたみされます",
             font=("", 9),
             foreground="gray"
         )
-        info_label.pack(fill="x", pady=(0, pad))
+        info_label.pack(side="left", fill="x", expand=True)
         
         # セクター別銘柄数のTreeview（アコーディオン表示用）
         count_tree_frame = ttk.Frame(sector_count_frame)
@@ -214,7 +238,7 @@ class MarketConditionsTab:
         count_v_scrollbar = ttk.Scrollbar(count_tree_frame, orient="vertical")
         count_v_scrollbar.pack(side="right", fill="y")
         
-        count_columns = ("セクター", "業種", "銘柄数")
+        count_columns = ("セクター", "業種", "銘柄数", "平均PER", "平均PBR", "平均利回り", "平均ROA", "平均ROE")
         self.sector_count_tree = ttk.Treeview(
             count_tree_frame,
             columns=count_columns,
@@ -227,19 +251,33 @@ class MarketConditionsTab:
         
         count_v_scrollbar.config(command=self.sector_count_tree.yview)
         
+        # 水平スクロールバーを追加
+        count_h_scrollbar = ttk.Scrollbar(count_tree_frame, orient="horizontal")
+        count_h_scrollbar.pack(side="bottom", fill="x")
+        self.sector_count_tree.config(xscrollcommand=count_h_scrollbar.set)
+        count_h_scrollbar.config(command=self.sector_count_tree.xview)
+        
         # 列の設定
         self.sector_count_tree.column("#0", width=20, stretch=False)  # ツリーアイコン用
         self.sector_count_tree.column("セクター", width=150, anchor="w")
         self.sector_count_tree.column("業種", width=200, anchor="w")
         self.sector_count_tree.column("銘柄数", width=100, anchor="e")
+        self.sector_count_tree.column("平均PER", width=80, anchor="e")
+        self.sector_count_tree.column("平均PBR", width=80, anchor="e")
+        self.sector_count_tree.column("平均利回り", width=90, anchor="e")
+        self.sector_count_tree.column("平均ROA", width=80, anchor="e")
+        self.sector_count_tree.column("平均ROE", width=80, anchor="e")
         
         for col in count_columns:
             self.sector_count_tree.heading(col, text=col)
         
         # 初期状態では空のメッセージを表示
-        self.sector_count_tree.insert("", "end", values=("分析実行後に表示されます", "", ""))
+        self.sector_count_tree.insert("", "end", values=("分析実行後に表示されます", "", "", "", "", "", ""))
         
-        # ダブルクリックイベントを追加（セクター行のみ）
+        # 展開/折りたたみイベントを追加（セクター行の展開時に業種を表示）
+        self.sector_count_tree.bind("<<TreeviewOpen>>", self._on_sector_count_open)
+        
+        # ダブルクリックイベントを追加（別ウィンドウ表示用）
         self.sector_count_tree.bind("<Double-1>", self._on_sector_count_double_click)
         
         # グラフ表示フレーム
@@ -406,26 +444,141 @@ class MarketConditionsTab:
         thread.start()
     
     def _display_sector_counts(self, sector_count_df: pd.DataFrame):
-        """セクター別銘柄数をTreeviewに表示（業種情報なしの場合）"""
+        """セクター別銘柄数をTreeviewに表示（業種情報なしの場合、財務指標付き）"""
         # 既存のデータをクリア
         for item in self.sector_count_tree.get_children():
             self.sector_count_tree.delete(item)
+        
+        # 財務指標を取得
+        try:
+            from src.sentiment.sector_flow_analyzer import SectorFlowAnalyzer
+            analyzer = SectorFlowAnalyzer(self.db_path)
+            sector_metrics_df = analyzer.get_sector_financial_metrics()
+            
+            # デバッグ情報
+            print(f"[DEBUG] セクター別財務指標: {len(sector_metrics_df)}件")
+            
+            # セクター別財務指標を辞書に変換
+            sector_metrics_dict = {}
+            if not sector_metrics_df.empty:
+                for _, row in sector_metrics_df.iterrows():
+                    sector_metrics_dict[row['sector']] = {
+                        'avg_per': row.get('avg_per'),
+                        'avg_pbr': row.get('avg_pbr'),
+                        'avg_dividend_yield': row.get('avg_dividend_yield'),
+                        'avg_roa': row.get('avg_roa'),
+                        'avg_roe': row.get('avg_roe')
+                    }
+                print(f"[DEBUG] セクター別財務指標辞書: {len(sector_metrics_dict)}件")
+            else:
+                print("[DEBUG] セクター別財務指標データが空です")
+        except Exception as e:
+            print(f"[ERROR] 財務指標取得エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            sector_metrics_dict = {}
+        
+        # 財務指標をフォーマットする関数
+        def format_metric(value, is_percent=False, decimals=2):
+            if value is None or pd.isna(value):
+                return "-"
+            if is_percent:
+                return f"{value:.{decimals}f}%"
+            else:
+                return f"{value:.{decimals}f}"
         
         # データを挿入
         for _, row in sector_count_df.iterrows():
             sector = row['sector']
             count = int(row['count'])
-            self.sector_count_tree.insert("", "end", values=(sector, "", f"{count:,}"))
+            
+            # セクターの財務指標を取得
+            sector_metrics = sector_metrics_dict.get(sector, {})
+            
+            self.sector_count_tree.insert(
+                "",
+                "end",
+                values=(
+                    sector,
+                    "",
+                    f"{count:,}",
+                    format_metric(sector_metrics.get('avg_per'), decimals=1),
+                    format_metric(sector_metrics.get('avg_pbr'), decimals=2),
+                    format_metric(sector_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_roa'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                ),
+                tags=("sector",)
+            )
+        
+        # セクター行のスタイル設定
+        self.sector_count_tree.tag_configure("sector", font=("", 9, "bold"))
     
     def _display_sector_counts_with_industries(
         self, 
         sector_count_df: pd.DataFrame, 
         sector_industry_count_df: pd.DataFrame
     ):
-        """セクター別銘柄数をアコーディオン表示（業種を含む）"""
+        """セクター別銘柄数をアコーディオン表示（業種を含む、財務指標付き）"""
         # 既存のデータをクリア
         for item in self.sector_count_tree.get_children():
             self.sector_count_tree.delete(item)
+        
+        # 財務指標を取得
+        try:
+            from src.sentiment.sector_flow_analyzer import SectorFlowAnalyzer
+            analyzer = SectorFlowAnalyzer(self.db_path)
+            sector_metrics_df = analyzer.get_sector_financial_metrics()
+            sector_industry_metrics_df = analyzer.get_sector_industry_financial_metrics()
+            
+            # デバッグ情報
+            print(f"[DEBUG] セクター別財務指標: {len(sector_metrics_df)}件")
+            print(f"[DEBUG] セクター・業種別財務指標: {len(sector_industry_metrics_df)}件")
+            
+            # セクター別財務指標を辞書に変換
+            sector_metrics_dict = {}
+            if not sector_metrics_df.empty:
+                for _, row in sector_metrics_df.iterrows():
+                    sector_metrics_dict[row['sector']] = {
+                        'avg_per': row.get('avg_per'),
+                        'avg_pbr': row.get('avg_pbr'),
+                        'avg_dividend_yield': row.get('avg_dividend_yield'),
+                        'avg_roa': row.get('avg_roa'),
+                        'avg_roe': row.get('avg_roe')
+                    }
+                print(f"[DEBUG] セクター別財務指標辞書: {len(sector_metrics_dict)}件")
+            else:
+                print("[DEBUG] セクター別財務指標データが空です")
+            
+            # セクター・業種別財務指標を辞書に変換
+            sector_industry_metrics_dict = {}
+            if not sector_industry_metrics_df.empty:
+                for _, row in sector_industry_metrics_df.iterrows():
+                    key = (row['sector'], row['industry'])
+                    sector_industry_metrics_dict[key] = {
+                        'avg_per': row.get('avg_per'),
+                        'avg_pbr': row.get('avg_pbr'),
+                        'avg_dividend_yield': row.get('avg_dividend_yield'),
+                        'avg_roe': row.get('avg_roe')
+                    }
+                print(f"[DEBUG] セクター・業種別財務指標辞書: {len(sector_industry_metrics_dict)}件")
+            else:
+                print("[DEBUG] セクター・業種別財務指標データが空です")
+        except Exception as e:
+            print(f"[ERROR] 財務指標取得エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            sector_metrics_dict = {}
+            sector_industry_metrics_dict = {}
+        
+        # 財務指標をフォーマットする関数
+        def format_metric(value, is_percent=False, decimals=2):
+            if value is None or pd.isna(value):
+                return "-"
+            if is_percent:
+                return f"{value:.{decimals}f}%"
+            else:
+                return f"{value:.{decimals}f}"
         
         # セクター・業種別データをセクターごとにグループ化
         sector_industry_dict: Dict[str, List[Tuple[str, int]]] = {}
@@ -447,28 +600,42 @@ class MarketConditionsTab:
             sector = row['sector']
             count = int(row['count'])
             
+            # セクターの財務指標を取得
+            sector_metrics = sector_metrics_dict.get(sector, {})
+            
             # セクター行を親アイテムとして挿入
             sector_item = self.sector_count_tree.insert(
                 "", "end", 
                 text="",  # ツリーアイコン用
-                values=(sector, "", f"{count:,}"),
+                values=(
+                    sector,
+                    "",
+                    f"{count:,}",
+                    format_metric(sector_metrics.get('avg_per'), decimals=1),
+                    format_metric(sector_metrics.get('avg_pbr'), decimals=2),
+                    format_metric(sector_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_roa'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                ),
                 tags=("sector",)
             )
             sector_items[sector] = sector_item
             
-            # そのセクターの業種を子アイテムとして挿入
+            # 業種は+アイコンをクリックしたときに表示されるため、初期表示では追加しない
+            # ただし、+アイコンを表示するためにダミー子アイテムを追加
             if sector in sector_industry_dict:
-                for industry, industry_count in sector_industry_dict[sector]:
-                    self.sector_count_tree.insert(
-                        sector_item, "end",
-                        text="",  # ツリーアイコン用
-                        values=("", industry, f"{industry_count:,}"),
-                        tags=("industry",)
-                    )
+                # ダミー子アイテムを追加して+アイコンを表示
+                self.sector_count_tree.insert(
+                    sector_item, "end",
+                    text="",
+                    values=("", "", "", "", "", "", "", ""),
+                    tags=("dummy",)
+                )
         
         # セクター行のスタイル設定
         self.sector_count_tree.tag_configure("sector", font=("", 9, "bold"))
         self.sector_count_tree.tag_configure("industry", font=("", 9))
+        self.sector_count_tree.tag_configure("stock", font=("", 8))  # 銘柄行は少し小さめのフォント
         
         # セクター数に応じてTreeviewの高さを動的に調整（セクター全体が表示できるように）
         sector_count = len(sector_count_df)
@@ -773,6 +940,319 @@ class MarketConditionsTab:
         if fig:
             fig.tight_layout()
     
+    def _on_fetch_financial_metrics(self):
+        """財務指標取得ボタンがクリックされたときの処理"""
+        if self._analyzing:
+            messagebox.showwarning(
+                "警告",
+                "既に処理が実行中です。",
+                parent=self.parent
+            )
+            return
+        
+        # 確認ダイアログ
+        result = messagebox.askyesno(
+            "確認",
+            "全銘柄の財務指標を取得しますか？\n（初回実行時は時間がかかります）",
+            parent=self.parent
+        )
+        
+        if not result:
+            return
+        
+        def fetch_in_thread():
+            try:
+                self._analyzing = True
+                self.status_var.set("状態: 財務指標を取得中...")
+                
+                from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+                from src.screening.jpx400_manager import JPX400Manager
+                
+                financial_metrics_manager = FinancialMetricsManager(self.db_path)
+                jpx400_manager = JPX400Manager()
+                
+                # JPX400銘柄リストを取得
+                symbols = jpx400_manager.load_symbols()
+                if not symbols:
+                    self.parent.after(0, lambda: messagebox.showwarning(
+                        "警告",
+                        "JPX400銘柄リストが空です。",
+                        parent=self.parent
+                    ))
+                    return
+                
+                # 進捗コールバック
+                def progress_callback(symbol, success, current, total):
+                    # 毎回ステータスを更新（10件ごとまたは最初/最後）
+                    if current % 10 == 0 or current == 1 or current == total:
+                        status_text = f"状態: 財務指標取得中... ({current}/{total})"
+                        self.parent.after(0, lambda: self.status_var.set(status_text))
+                        print(f"[進捗] {status_text} - {symbol} {'成功' if success else 'エラー'}")
+                
+                # 財務指標を一括取得
+                results = financial_metrics_manager.fetch_and_save_batch(
+                    symbols,
+                    progress_callback=progress_callback,
+                    max_retries=3,
+                    retry_delay=1.0
+                )
+                
+                # 結果を表示
+                success_count = results['success_count']
+                error_count = results['error_count']
+                
+                self.parent.after(0, lambda: self.status_var.set(
+                    f"状態: 財務指標取得完了（成功: {success_count}, エラー: {error_count}）"
+                ))
+                
+                # 成功メッセージ
+                self.parent.after(0, lambda: messagebox.showinfo(
+                    "完了",
+                    f"財務指標の取得が完了しました。\n成功: {success_count}銘柄\nエラー: {error_count}銘柄",
+                    parent=self.parent
+                ))
+                
+                # 最新実施日時を更新
+                self.parent.after(0, self._update_last_fetch_time_display)
+                
+                # セクター別銘柄数を再読み込み（財務指標を表示）
+                self.parent.after(0, self._reload_sector_counts)
+                
+            except Exception as e:
+                error_msg = f"財務指標取得エラー: {e}"
+                print(f"[ERROR] {error_msg}")
+                import traceback
+                traceback.print_exc()
+                self.parent.after(0, lambda: messagebox.showerror(
+                    "エラー",
+                    error_msg,
+                    parent=self.parent
+                ))
+                self.parent.after(0, lambda: self.status_var.set("状態: エラーが発生しました"))
+            finally:
+                self._analyzing = False
+        
+        thread = threading.Thread(target=fetch_in_thread, daemon=True)
+        thread.start()
+    
+    def _update_last_fetch_time_display(self):
+        """最新実施日時の表示を更新"""
+        try:
+            from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+            financial_metrics_manager = FinancialMetricsManager(self.db_path)
+            last_fetch_time = financial_metrics_manager.get_last_fetch_time()
+            
+            if last_fetch_time:
+                self.last_fetch_time_label.config(text=f"最新実施: {last_fetch_time}")
+            else:
+                self.last_fetch_time_label.config(text="最新実施: 未実行")
+        except Exception as e:
+            print(f"[ERROR] 最新実施日時の取得エラー: {e}")
+            self.last_fetch_time_label.config(text="最新実施: 取得エラー")
+    
+    def auto_fetch_financial_metrics(self):
+        """自動実行：財務指標取得（確認なし）"""
+        if self._analyzing:
+            print("[自動実行] 財務指標取得は既に実行中です")
+            return
+        
+        def fetch_in_thread():
+            try:
+                self._analyzing = True
+                self.status_var.set("状態: 財務指標を取得中（自動）...")
+                print(f"[自動実行] 財務指標取得を開始します（{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）")
+                
+                from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+                from src.screening.jpx400_manager import JPX400Manager
+                
+                financial_metrics_manager = FinancialMetricsManager(self.db_path)
+                jpx400_manager = JPX400Manager()
+                
+                # JPX400銘柄リストを取得
+                symbols = jpx400_manager.load_symbols()
+                if not symbols:
+                    print("[自動実行] JPX400銘柄リストが空です")
+                    return
+                
+                # 財務指標を一括取得（進捗コールバックなし）
+                results = financial_metrics_manager.fetch_and_save_batch(
+                    symbols,
+                    progress_callback=None,
+                    max_retries=3,
+                    retry_delay=1.0
+                )
+                
+                # 結果をログに出力
+                success_count = results['success_count']
+                error_count = results['error_count']
+                print(f"[自動実行完了] 財務指標取得: 成功 {success_count}銘柄, エラー {error_count}銘柄")
+                
+                # 最新実施日時を更新
+                self.parent.after(0, self._update_last_fetch_time_display)
+                
+            except Exception as e:
+                print(f"[自動実行エラー] 財務指標取得で例外: {e}")
+                import traceback
+                traceback.print_exc()
+            finally:
+                self._analyzing = False
+                self.parent.after(0, lambda: self.status_var.set("状態: 待機中"))
+        
+        thread = threading.Thread(target=fetch_in_thread, daemon=True)
+        thread.start()
+    
+    def _reload_sector_counts(self):
+        """セクター別銘柄数を再読み込み"""
+        def load_in_thread():
+            try:
+                from src.sentiment.sector_flow_analyzer import SectorFlowAnalyzer
+                
+                analyzer = SectorFlowAnalyzer(self.db_path)
+                sector_count_df = analyzer.get_sector_stock_counts()
+                sector_industry_count_df = analyzer.get_sector_industry_stock_counts()
+                
+                # セクター別銘柄数をアコーディオン表示
+                if not sector_count_df.empty and not sector_industry_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts_with_industries(
+                        sector_count_df, sector_industry_count_df
+                    ))
+                elif not sector_count_df.empty:
+                    self.parent.after(0, lambda: self._display_sector_counts(sector_count_df))
+            except Exception as e:
+                print(f"[ERROR] セクター別銘柄数再読み込みエラー: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        thread = threading.Thread(target=load_in_thread, daemon=True)
+        thread.start()
+    
+    def _on_sector_count_open(self, event):
+        """セクター行が展開されたときの処理（業種を表示）"""
+        # 展開されたアイテムを取得（focusされているアイテム）
+        focus_item = self.sector_count_tree.focus()
+        if not focus_item:
+            return
+        
+        item = self.sector_count_tree.item(focus_item)
+        tags = item.get('tags', [])
+        values = item['values']
+        
+        # セクター行の場合のみ処理
+        if 'sector' in tags and values and len(values) > 0:
+            sector = values[0]
+            if sector and sector != "分析実行後に表示されます":
+                # 子アイテムを確認
+                children = self.sector_count_tree.get_children(focus_item)
+                
+                # ダミー子アイテムのみの場合は業種を追加
+                has_real_children = False
+                for child in children:
+                    child_tags = self.sector_count_tree.item(child).get('tags', [])
+                    if 'dummy' not in child_tags:
+                        has_real_children = True
+                        break
+                
+                if not has_real_children:
+                    # ダミー子アイテムを削除して業種を追加
+                    for child in list(children):
+                        child_tags = self.sector_count_tree.item(child).get('tags', [])
+                        if 'dummy' in child_tags:
+                            self.sector_count_tree.delete(child)
+                    
+                    # 業種を追加
+                    self._expand_sector(focus_item, sector)
+    
+    def _expand_sector(self, sector_item_id: str, sector: str):
+        """セクター行を展開（業種を表示）"""
+        # 子アイテムを確認
+        children = self.sector_count_tree.get_children(sector_item_id)
+        
+        # ダミー子アイテムを削除
+        for child in list(children):
+            child_tags = self.sector_count_tree.item(child).get('tags', [])
+            if 'dummy' in child_tags:
+                self.sector_count_tree.delete(child)
+        
+        # 既に業種行がある場合は何もしない
+        children = self.sector_count_tree.get_children(sector_item_id)
+        if children:
+            return
+        
+        # セクター・業種別データを取得
+        try:
+            from src.sentiment.sector_flow_analyzer import SectorFlowAnalyzer
+            analyzer = SectorFlowAnalyzer(self.db_path)
+            sector_industry_count_df = analyzer.get_sector_industry_stock_counts()
+            sector_industry_metrics_df = analyzer.get_sector_industry_financial_metrics()
+            
+            # セクター・業種別財務指標を辞書に変換
+            sector_industry_metrics_dict = {}
+            if not sector_industry_metrics_df.empty:
+                for _, row in sector_industry_metrics_df.iterrows():
+                    key = (row['sector'], row['industry'])
+                    sector_industry_metrics_dict[key] = {
+                        'avg_per': row.get('avg_per'),
+                        'avg_pbr': row.get('avg_pbr'),
+                        'avg_dividend_yield': row.get('avg_dividend_yield'),
+                        'avg_roa': row.get('avg_roa'),
+                        'avg_roe': row.get('avg_roe')
+                    }
+            
+            # 財務指標をフォーマットする関数
+            def format_metric(value, is_percent=False, decimals=2):
+                if value is None or pd.isna(value):
+                    return "-"
+                if is_percent:
+                    return f"{value:.{decimals}f}%"
+                else:
+                    return f"{value:.{decimals}f}"
+            
+            # 該当セクターの業種を取得
+            sector_industries = sector_industry_count_df[
+                sector_industry_count_df['sector'] == sector
+            ].sort_values('count', ascending=False)
+            
+            # 業種行を追加
+            for _, row in sector_industries.iterrows():
+                industry = row['industry']
+                industry_count = int(row['count'])
+                industry_metrics = sector_industry_metrics_dict.get((sector, industry), {})
+                
+                self.sector_count_tree.insert(
+                    sector_item_id, "end",
+                    text="",  # ツリーアイコン用
+                    values=(
+                        "",
+                        industry,
+                        f"{industry_count:,}",
+                            format_metric(industry_metrics.get('avg_per'), decimals=1),
+                            format_metric(industry_metrics.get('avg_pbr'), decimals=2),
+                            format_metric(industry_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
+                            format_metric(industry_metrics.get('avg_roa'), is_percent=True, decimals=2),
+                            format_metric(industry_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                    ),
+                    tags=("industry",)
+                )
+        except Exception as e:
+            print(f"[ERROR] セクター展開エラー: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    def _collapse_sector(self, sector_item_id: str):
+        """セクター行を折りたたみ（業種を非表示）"""
+        # 子アイテム（業種行）を削除
+        children = self.sector_count_tree.get_children(sector_item_id)
+        for child in children:
+            self.sector_count_tree.delete(child)
+        
+        # ダミー子アイテムを追加して+アイコンを再表示
+        self.sector_count_tree.insert(
+            sector_item_id, "end",
+            text="",
+            values=("", "", "", "", "", "", "", ""),
+            tags=("dummy",)
+        )
+    
     def _on_sector_count_double_click(self, event):
         """セクター別登録銘柄数の行をダブルクリックしたときの処理"""
         selection = self.sector_count_tree.selection()
@@ -906,6 +1386,11 @@ class MarketConditionsTab:
                     except Exception as e:
                         print(f"[セクター・業種銘柄一覧] {symbol}の最新データ取得エラー: {e}")
                 
+                # 財務指標を取得
+                from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+                financial_metrics_manager = FinancialMetricsManager(self.db_path)
+                financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(sector_industry_symbols)
+                
                 # ウィンドウを表示
                 self.parent.after(0, lambda: self._show_sector_symbols_window(
                     f"{selected_sector} - {selected_industry}", 
@@ -913,7 +1398,8 @@ class MarketConditionsTab:
                     symbol_names, 
                     sectors_dict, 
                     industries_dict, 
-                    symbol_stats
+                    symbol_stats,
+                    financial_metrics_dict
                 ))
                 
                 self.status_var.set("状態: 待機中")
@@ -1018,9 +1504,14 @@ class MarketConditionsTab:
                     except Exception as e:
                         print(f"[セクター銘柄一覧] {symbol}の最新データ取得エラー: {e}")
                 
+                # 財務指標を取得
+                from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+                financial_metrics_manager = FinancialMetricsManager(self.db_path)
+                financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(sector_symbols)
+                
                 # ウィンドウを表示
                 self.parent.after(0, lambda: self._show_sector_symbols_window(
-                    selected_sector, sector_symbols, symbol_names, sectors_dict, industries_dict, symbol_stats
+                    selected_sector, sector_symbols, symbol_names, sectors_dict, industries_dict, symbol_stats, financial_metrics_dict
                 ))
                 
                 self.status_var.set("状態: 待機中")
@@ -1047,7 +1538,8 @@ class MarketConditionsTab:
         symbol_names: Dict[str, str],
         sectors_dict: Dict[str, str],
         industries_dict: Dict[str, str],
-        symbol_stats: Dict[str, dict]
+        symbol_stats: Dict[str, dict],
+        financial_metrics_dict: Optional[Dict[str, Dict[str, Optional[float]]]] = None
     ):
         """セクター別銘柄一覧を別ウィンドウで表示"""
         window = tk.Toplevel(self.parent)
@@ -1078,7 +1570,7 @@ class MarketConditionsTab:
         h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal")
         h_scrollbar.pack(side="bottom", fill="x")
         
-        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
+        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "PER", "PBR", "利回り", "ROA", "ROE", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
         tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1097,6 +1589,11 @@ class MarketConditionsTab:
         tree.column("銘柄名", width=200, anchor="w")
         tree.column("セクター", width=150, anchor="w")
         tree.column("業種", width=200, anchor="w")
+        tree.column("PER", width=80, anchor="e")
+        tree.column("PBR", width=80, anchor="e")
+        tree.column("利回り", width=90, anchor="e")
+        tree.column("ROA", width=80, anchor="e")
+        tree.column("ROE", width=80, anchor="e")
         tree.column("データ件数", width=100, anchor="e")
         tree.column("最初の日付", width=120, anchor="center")
         tree.column("最後の日付", width=120, anchor="center")
@@ -1116,7 +1613,7 @@ class MarketConditionsTab:
             
             items = [(tree.set(item, column), item) for item in tree.get_children('')]
             
-            if column in ["現在株価", "σ値", "データ件数", "最新出来高"]:
+            if column in ["現在株価", "σ値", "データ件数", "最新出来高", "PER", "PBR", "利回り", "ROA", "ROE"]:
                 def sort_key(x):
                     try:
                         val = x[0].replace('σ', '').replace('+', '').replace(',', '').replace('N/A', '0').strip()
@@ -1192,11 +1689,24 @@ class MarketConditionsTab:
             latest_volume = f"{stats['latest_volume']:,}" if stats.get('latest_volume') is not None else "N/A"
             sigma_str = f"{stats['sigma_value']:+.2f}σ" if stats.get('sigma_value') is not None else "N/A"
             
+            # 財務指標を取得
+            metrics = financial_metrics_dict.get(symbol, {}) if financial_metrics_dict else {}
+            per = f"{metrics.get('per', 0):.1f}" if metrics.get('per') is not None else "-"
+            pbr = f"{metrics.get('pbr', 0):.2f}" if metrics.get('pbr') is not None else "-"
+            dividend_yield = f"{metrics.get('dividend_yield', 0):.2f}%" if metrics.get('dividend_yield') is not None else "-"
+            roa = f"{metrics.get('roa', 0):.2f}%" if metrics.get('roa') is not None else "-"
+            roe = f"{metrics.get('roe', 0):.2f}%" if metrics.get('roe') is not None else "-"
+            
             tree.insert("", "end", values=(
                 symbol,
                 name,
                 sector,
                 industry,
+                per,
+                pbr,
+                dividend_yield,
+                roa,
+                roe,
                 f"{data_count:,}" if data_count > 0 else "0",
                 first_date,
                 last_date,
@@ -1211,7 +1721,7 @@ class MarketConditionsTab:
             if selection:
                 item = tree.item(selection[0])
                 symbol = item['values'][0]
-                symbol_name = item['values'][1]  # 銘柄名は2番目の列
+                symbol_name = item['values'][1]  # 銘柄名は2番目の列（財務指標追加後も変わらず）
                 
                 # チャート表示
                 try:

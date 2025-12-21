@@ -21,7 +21,8 @@ class AutoTaskManager:
         self,
         jpx_collect_callback: Optional[Callable] = None,
         sentiment_calc_callback: Optional[Callable] = None,
-        sentiment_eval_callback: Optional[Callable] = None
+        sentiment_eval_callback: Optional[Callable] = None,
+        financial_metrics_callback: Optional[Callable] = None
     ):
         """自動タスクのスケジューリングを開始"""
         try:
@@ -73,6 +74,17 @@ class AutoTaskManager:
                     replace_existing=True
                 )
                 print("[自動実行] 市場動向記録・評価を15:40に設定しました")
+            
+            # 財務指標取得: 0:00に実行
+            if financial_metrics_callback:
+                self.scheduler.add_job(
+                    financial_metrics_callback,
+                    CronTrigger(hour=0, minute=0),
+                    id='financial_metrics_fetch',
+                    name='財務指標取得(0:00)',
+                    replace_existing=True
+                )
+                print("[自動実行] 財務指標取得を0:00に設定しました")
             
             self.scheduler.start()
             self._running = True
