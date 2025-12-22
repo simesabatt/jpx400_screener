@@ -268,8 +268,9 @@ class JPX400Screener:
         """
         条件2: 5MA線の上で2回続けて陽線が出ている
         
-        注意: DBにある最後の日付（本日）とその前日で判定します。
-        仮終値データ（is_temporary_close=1）は除外しますが、正式データ（is_temporary_close=0）は使用します。
+        注意: 今日のデータが仮終値として存在する場合、それが陰線なら条件を満たしません。
+        今日のデータが仮終値で陽線の場合、今日と昨日で判定します。
+        今日のデータが仮終値でない場合、正式データの最新2日で判定します。
         
         Args:
             df: 日足データ（移動平均線を含む）
@@ -280,12 +281,71 @@ class JPX400Screener:
         if len(df) < 2:
             return False
         
+        today = date.today()
+        
+        # 今日のデータが存在するか確認
+        has_today_data = False
+        today_row = None
+        if not df.empty:
+            latest_date = df.index[-1].date()
+            if latest_date == today:
+                today_row = df.iloc[-1]
+                has_today_data = True
+        
+        # 今日のデータが仮終値として存在する場合
+        if has_today_data and today_row is not None:
+            is_temporary = today_row.get('is_temporary_close', 0) == 1
+            
+            if is_temporary:
+                # 今日が陰線なら条件を満たさない
+                if today_row['close'] <= today_row['open']:
+                    return False
+                
+                # 今日が陽線の場合、昨日のデータを取得
+                if len(df) < 2:
+                    return False
+                
+                # 昨日のデータを取得（仮終値を除外）
+                if 'is_temporary_close' in df.columns:
+                    df_excluding_temporary = df[df['is_temporary_close'] == 0]
+                else:
+                    df_excluding_temporary = df
+                
+                # 昨日のデータが存在するか確認
+                if len(df_excluding_temporary) < 1:
+                    return False
+                
+                # 昨日のデータを取得（今日より前の最新データ）
+                prev_date = df_excluding_temporary.index[-1].date()
+                if prev_date >= today:
+                    # 今日より前のデータを取得
+                    df_before_today = df_excluding_temporary[df_excluding_temporary.index.date < today]
+                    if len(df_before_today) < 1:
+                        return False
+                    prev = df_before_today.iloc[-1]
+                else:
+                    prev = df_excluding_temporary.iloc[-1]
+                
+                # 今日が陽線で、昨日も陽線か確認
+                is_positive_today = today_row['close'] > today_row['open']
+                is_positive_prev = prev['close'] > prev['open']
+                
+                if not (is_positive_today and is_positive_prev):
+                    return False
+                
+                # 両方の終値が5MAより上か
+                condition = (
+                    today_row['close'] > today_row['ma5'] and
+                    prev['close'] > prev['ma5']
+                )
+                
+                return condition
+        
+        # 今日のデータが仮終値でない場合、既存のロジックで判定
         # 仮終値データ（is_temporary_close=1）を除外
-        # 正式データ（is_temporary_close=0またはNone）のみを使用
         if 'is_temporary_close' in df.columns:
             df_excluding_temporary = df[df['is_temporary_close'] == 0]
         else:
-            # is_temporary_close列がない場合は全て正式データとして扱う
             df_excluding_temporary = df
         
         # 仮終値データを除外した後、データが2日未満の場合はFalseを返す

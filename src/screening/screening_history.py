@@ -500,14 +500,50 @@ class ScreeningHistory:
                 continue
             
             # 実行日より後の正式データのみを取得
-            future_df = df[df.index.date > exec_date] if exec_date else df
-            future_dates = list(future_df.index.date)
+            # exec_dateがNoneの場合は全データを使用
+            if exec_date:
+                future_df = df[df.index.date > exec_date].copy()
+            else:
+                future_df = df.copy()
+            
+            # 取引日のみを抽出（実際にDBにデータが存在する日のみ）
+            # インデックスの日付を取得し、重複を除去してソート
+            if future_df.empty:
+                # 未来データが存在しない場合
+                for h in horizons:
+                    symbol[f"perf_day{h}_label"] = "N/A"
+                    symbol[f"perf_day{h}_pct"] = None
+                continue
+            
+            # 実際にDBに存在する日付のみを取得（重複を除去してソート）
+            trading_dates = sorted(list(set(future_df.index.date)))
             
             for h in horizons:
-                if len(future_dates) >= h:
-                    target_date = future_dates[h - 1]
+                if len(trading_dates) >= h:
+                    # h番目の取引日を取得（実際にDBに存在する日付）
+                    target_date = trading_dates[h - 1]
+                    
+                    # 該当日付のデータが実際に存在することを再確認
+                    target_df = future_df[future_df.index.date == target_date]
+                    if target_df.empty or len(target_df) == 0:
+                        # データが存在しない場合はスキップ（valid_countsにカウントしない）
+                        symbol[f"perf_day{h}_label"] = "N/A"
+                        symbol[f"perf_day{h}_pct"] = None
+                        continue
+                    
                     try:
-                        close_val = float(future_df[future_df.index.date == target_date].iloc[-1]["close"])
+                        # データが存在することを確認してから取得
+                        if 'close' not in target_df.columns:
+                            symbol[f"perf_day{h}_label"] = "N/A"
+                            symbol[f"perf_day{h}_pct"] = None
+                            continue
+                        
+                        close_val = float(target_df.iloc[-1]["close"])
+                        if close_val <= 0:
+                            symbol[f"perf_day{h}_label"] = "N/A"
+                            symbol[f"perf_day{h}_pct"] = None
+                            continue
+                        
                         change_pct = (close_val / price_at_sc - 1.0) * 100
                         symbol[f"perf_day{h}_pct"] = change_pct
                         is_up = change_pct > 0
@@ -517,10 +553,12 @@ class ScreeningHistory:
                         if is_up:
                             win_counts[h] += 1
                         change_lists[h].append(change_pct)
-                    except Exception:
+                    except Exception as e:
+                        # エラーが発生した場合はスキップ（valid_countsにカウントしない）
                         symbol[f"perf_day{h}_label"] = "N/A"
                         symbol[f"perf_day{h}_pct"] = None
                 else:
+                    # 取引日が不足している場合
                     symbol[f"perf_day{h}_label"] = "N/A"
                     symbol[f"perf_day{h}_pct"] = None
         
