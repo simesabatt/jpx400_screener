@@ -740,21 +740,8 @@ class ScreeningHistory:
             if not symbols_data:
                 print(f"[全銘柄パフォーマンス] 有効な銘柄データがありません")
                 result = {"win_rates": {}}
-                # 空の結果もデータベースに保存（次回以降の再計算を避けるため）
-                try:
-                    with sqlite3.connect(self.db_path) as conn:
-                        cursor = conn.cursor()
-                        performance_json = json.dumps(result, ensure_ascii=False, default=str)
-                        cursor.execute("""
-                            INSERT OR REPLACE INTO all_symbols_performance (date, performance_json)
-                            VALUES (?, ?)
-                        """, (date_str, performance_json))
-                        conn.commit()
-                        print(f"[全銘柄パフォーマンス] 空の結果をデータベースに保存: {date_str}")
-                except Exception as e:
-                    print(f"[WARN] 全銘柄パフォーマンス保存エラー: {e}")
-                    import traceback
-                    traceback.print_exc()
+                # 空の結果はデータベースに保存しない（次回再計算されるようにする）
+                print(f"[全銘柄パフォーマンス] 正式データが不足しているため、データベースへの保存をスキップします: {date_str}")
                 return result
             
             print(f"[全銘柄パフォーマンス] {len(symbols_data)}銘柄のデータを取得しました")
@@ -766,7 +753,25 @@ class ScreeningHistory:
                 horizons
             )
             
-            # データベースに保存
+            # 正式データが十分に存在するかチェック（各horizonについて）
+            # 正式データが不足している場合は保存をスキップ（次回再計算されるようにする）
+            should_save = True
+            min_valid_ratio = 0.5  # 全銘柄の50%以上のデータが必要
+            
+            for h in horizons:
+                valid_count = result.get('valid_counts', {}).get(h, 0)
+                if valid_count < len(symbols_data) * min_valid_ratio:
+                    print(f"[全銘柄パフォーマンス] +{h}日後の正式データが不足しています (有効: {valid_count}/{len(symbols_data)}, 必要: {int(len(symbols_data) * min_valid_ratio)}以上)")
+                    should_save = False
+                    break
+            
+            if not should_save:
+                print(f"[全銘柄パフォーマンス] 正式データが不足しているため、データベースへの保存をスキップします: {date_str}")
+                print(f"[全銘柄パフォーマンス] 正式データが揃った後に再計算してください")
+                # 保存せずに結果を返す（次回再計算される）
+                return result
+            
+            # データベースに保存（正式データが十分に存在する場合のみ）
             try:
                 with sqlite3.connect(self.db_path) as conn:
                     cursor = conn.cursor()
