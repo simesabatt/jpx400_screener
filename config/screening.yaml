@@ -12,4 +12,8 @@ screening:
   proximity:
     enable_macd_kd: true
     window_days: 1
+  performance:
+    # 並列処理の設定
+    use_parallel: true  # 並列処理を使用するか（true/false）
+    max_workers: null  # 最大スレッド数（nullの場合はCPUコア数を使用）
 

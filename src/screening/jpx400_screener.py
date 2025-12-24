@@ -18,6 +18,8 @@ import pandas as pd
 from datetime import datetime, date
 from typing import List, Dict, Optional
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import os
 
 from src.data_collector.ohlcv_data_manager import OHLCVDataManager
 from src.screening.jpx400_manager import JPX400Manager
@@ -67,6 +69,10 @@ class JPX400Screener:
                 "proximity": {
                     "enable_macd_kd": True,
                     "window_days": 1
+                },
+                "performance": {
+                    "use_parallel": True,
+                    "max_workers": None
                 }
             }
         }
@@ -706,18 +712,22 @@ class JPX400Screener:
             stoch_cfg = indicator_cfg.get("stochastic", {})
             proximity_cfg = screening_cfg.get("proximity", {})
 
-            # MACD / Stochasticを計算（欠損はそのままにし、サイン判定時にスキップ）
-            df_daily = self._calculate_macd(df_daily, macd_cfg)
-            df_daily = self._calculate_stochastic(df_daily, stoch_cfg)
-
-            macd_signals = self._detect_macd_bullish_signals(df_daily)
-            kd_signals = self._detect_kd_bullish_signals(df_daily, stoch_cfg.get("oversold_threshold", 20))
-
+            # MACD/KDフィルタが有効な場合のみ計算（最適化）
             macd_kd_filter_enabled = proximity_cfg.get("enable_macd_kd", True) if use_macd_kd_filter is None else use_macd_kd_filter
             macd_kd_window_days = proximity_cfg.get("window_days", 3) if macd_kd_window is None else macd_kd_window
 
+            macd_signals = []
+            kd_signals = []
             macd_kd_proximity_result = None
+            
             if macd_kd_filter_enabled:
+                # MACD / Stochasticを計算（欠損はそのままにし、サイン判定時にスキップ）
+                df_daily = self._calculate_macd(df_daily, macd_cfg)
+                df_daily = self._calculate_stochastic(df_daily, stoch_cfg)
+
+                macd_signals = self._detect_macd_bullish_signals(df_daily)
+                kd_signals = self._detect_kd_bullish_signals(df_daily, stoch_cfg.get("oversold_threshold", 20))
+
                 latest_idx = len(df_daily) - 1
                 latest_macd = df_daily["macd"].iloc[-1]
                 latest_macd_signal = df_daily["macd_signal"].iloc[-1]
@@ -875,7 +885,9 @@ class JPX400Screener:
         check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = 'just_crossed',
         use_macd_kd_filter: Optional[bool] = None,
-        macd_kd_window: Optional[int] = None
+        macd_kd_window: Optional[int] = None,
+        use_parallel: Optional[bool] = None,
+        max_workers: Optional[int] = None
     ) -> List[Dict]:
         """
         JPX400銘柄を全てスクリーニング
@@ -897,6 +909,8 @@ class JPX400Screener:
                 - 'has_crossed': 現在クロスしている銘柄（既にクロス済みも含む）
             use_macd_kd_filter: MACD/KD近接フィルタを有効にするか（Noneなら設定ファイルの値）
             macd_kd_window: 近接判定の営業日幅（Noneなら設定ファイルの値）
+            use_parallel: 並列処理を使用するか（Noneなら設定ファイルの値）
+            max_workers: 並列処理の最大スレッド数（NoneならCPUコア数）
             
         Returns:
             List[Dict]: 条件を満たす銘柄のリスト
@@ -908,13 +922,45 @@ class JPX400Screener:
             print("[JPX400Screener] JPX400銘柄リストが空です")
             return []
         
+        # 並列処理の設定を取得
+        screening_cfg = self.config.get("screening", {})
+        performance_cfg = screening_cfg.get("performance", {})
+        use_parallel_setting = performance_cfg.get("use_parallel", True) if use_parallel is None else use_parallel
+        max_workers_setting = performance_cfg.get("max_workers") if max_workers is None else max_workers
+        
+        if max_workers_setting is None:
+            max_workers_setting = min(os.cpu_count() or 4, len(symbols))
+        
         print(f"\n{'='*80}")
         print(f"JPX400銘柄スクリーニングを開始します")
         print(f"{'='*80}")
         print(f"対象銘柄数: {len(symbols)}")
         print(f"当日データ補完: {'有効' if complement_today else '無効'}")
+        print(f"並列処理: {'有効' if use_parallel_setting else '無効'}" + (f" ({max_workers_setting}スレッド)" if use_parallel_setting else ""))
         print(f"{'='*80}\n")
         
+        # 並列処理を使用する場合
+        if use_parallel_setting and len(symbols) > 1:
+            return self._screen_all_parallel(
+                symbols=symbols,
+                complement_today=complement_today,
+                progress_callback=progress_callback,
+                check_condition1=check_condition1,
+                check_condition2=check_condition2,
+                check_condition3=check_condition3,
+                check_condition4=check_condition4,
+                check_condition5=check_condition5,
+                check_condition6=check_condition6,
+                check_golden_cross_5_25=check_golden_cross_5_25,
+                check_golden_cross_25_75=check_golden_cross_25_75,
+                check_golden_cross_5_200=check_golden_cross_5_200,
+                golden_cross_mode=golden_cross_mode,
+                use_macd_kd_filter=use_macd_kd_filter,
+                macd_kd_window=macd_kd_window,
+                max_workers=max_workers_setting
+            )
+        
+        # 逐次処理（既存の実装）
         results = []
         yahoo_access_count = 0
         
@@ -974,6 +1020,137 @@ class JPX400Screener:
             # 進捗コールバック
             if progress_callback:
                 progress_callback(symbol, i, len(symbols), result)
+        
+        print(f"\n{'='*80}")
+        print(f"スクリーニング完了")
+        print(f"{'='*80}")
+        print(f"条件を満たす銘柄: {len(results)}件")
+        print(f"Yahoo Financeアクセス回数: {yahoo_access_count}回")
+        print(f"{'='*80}\n")
+        
+        return results
+    
+    def _screen_all_parallel(
+        self,
+        symbols: List[str],
+        complement_today: bool = True,
+        progress_callback: Optional[callable] = None,
+        check_condition1: bool = True,
+        check_condition2: bool = True,
+        check_condition3: bool = False,
+        check_condition4: bool = False,
+        check_condition5: bool = False,
+        check_condition6: bool = False,
+        check_golden_cross_5_25: bool = False,
+        check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
+        golden_cross_mode: str = 'just_crossed',
+        use_macd_kd_filter: Optional[bool] = None,
+        macd_kd_window: Optional[int] = None,
+        max_workers: int = 4
+    ) -> List[Dict]:
+        """
+        並列処理でJPX400銘柄をスクリーニング
+        
+        Args:
+            symbols: スクリーニング対象銘柄リスト
+            complement_today: 当日データがない場合に補完するか
+            progress_callback: 進捗コールバック関数（symbol, current, total, result）
+            check_condition1～check_condition6: 各種条件フラグ
+            check_golden_cross_5_25, check_golden_cross_25_75, check_golden_cross_5_200: ゴールデンクロス条件
+            golden_cross_mode: ゴールデンクロス判定モード
+            use_macd_kd_filter: MACD/KD近接フィルタを有効にするか
+            macd_kd_window: 近接判定の営業日幅
+            max_workers: 最大スレッド数
+            
+        Returns:
+            List[Dict]: 条件を満たす銘柄のリスト
+        """
+        results = []
+        yahoo_access_count = 0
+        completed_count = 0
+        total = len(symbols)
+        
+        def process_symbol(symbol: str) -> tuple:
+            """1銘柄を処理する関数（並列実行用）"""
+            nonlocal yahoo_access_count
+            
+            try:
+                # DBからデータを取得
+                df_daily = self.ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                    symbol=symbol,
+                    timeframe='1d',
+                    source='yahoo',
+                    include_temporary=True
+                )
+                
+                # 当日データの確認
+                need_complement = False
+                if df_daily.empty or len(df_daily) < 200:
+                    need_complement = True
+                else:
+                    today = date.today()
+                    latest_date = df_daily.index[-1].date()
+                    if latest_date < today:
+                        need_complement = True
+                    elif latest_date == today:
+                        latest_row = df_daily.iloc[-1]
+                        if latest_row.get('is_temporary_close', 0) == 1:
+                            need_complement = True
+                
+                if need_complement and complement_today:
+                    # Yahoo Financeから補完
+                    df_daily = self.data_collector.complement_today_data(symbol, df_daily)
+                    yahoo_access_count += 1
+                
+                # スクリーニング実行
+                result = self.screen_symbol(
+                    symbol, 
+                    complement_today=False,  # 既に補完済みなのでFalse
+                    check_condition1=check_condition1,
+                    check_condition2=check_condition2,
+                    check_condition3=check_condition3,
+                    check_condition4=check_condition4,
+                    check_condition5=check_condition5,
+                    check_condition6=check_condition6,
+                    check_golden_cross_5_25=check_golden_cross_5_25,
+                    check_golden_cross_25_75=check_golden_cross_25_75,
+                    check_golden_cross_5_200=check_golden_cross_5_200,
+                    golden_cross_mode=golden_cross_mode,
+                    use_macd_kd_filter=use_macd_kd_filter,
+                    macd_kd_window=macd_kd_window
+                )
+                
+                return (symbol, result, None)
+            except Exception as e:
+                return (symbol, None, str(e))
+        
+        # 並列処理実行
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # 各銘柄のスクリーニングを並列実行
+            future_to_symbol = {
+                executor.submit(process_symbol, symbol): symbol
+                for symbol in symbols
+            }
+            
+            # 完了したタスクから順に処理
+            for future in as_completed(future_to_symbol):
+                symbol, result, error = future.result()
+                completed_count += 1
+                
+                if error:
+                    print(f"[{completed_count}/{total}] {symbol}: ✗ エラー - {error}")
+                elif result:
+                    results.append(result)
+                    print(f"[{completed_count}/{total}] {symbol}: ✓ 条件を満たす")
+                else:
+                    # 進捗表示（50銘柄ごと）
+                    if completed_count % 50 == 0 or completed_count == total:
+                        print(f"[{completed_count}/{total}] 処理中...")
+                
+                # 進捗コールバック
+                if progress_callback:
+                    progress_callback(symbol, completed_count, total, result)
         
         print(f"\n{'='*80}")
         print(f"スクリーニング完了")

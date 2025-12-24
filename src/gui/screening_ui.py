@@ -117,71 +117,58 @@ class ScreeningUI:
                 symbol_sectors = ohlcv_manager.get_symbol_sectors(symbols)
                 symbol_industries = ohlcv_manager.get_symbol_industries(symbols)
                 
-                results = []
-                for i, symbol in enumerate(symbols, 1):
-                    if i % 10 == 0 or i == 1 or i == len(symbols):
-                        print(f"[スクリーニング] 進捗: {i}/{len(symbols)} ({symbol})")
-                    self.status_var.set(f"状態: スクリーニング実行中... ({i}/{len(symbols)}) - {symbol}")
-                    
-                    result = screener.screen_symbol(
-                        symbol,
-                        complement_today=True,
-                        check_condition1=check_condition1,
-                        check_condition2=check_condition2,
-                        check_condition3=check_condition3,
-                        check_condition4=check_condition4,
-                        check_condition5=check_condition5,
-                        check_condition6=check_condition6,
-                        check_golden_cross_5_25=check_golden_cross_5_25,
-                        check_golden_cross_25_75=check_golden_cross_25_75,
-                        check_golden_cross_5_200=check_golden_cross_5_200,
-                        golden_cross_mode=golden_cross_mode,
-                        use_macd_kd_filter=use_macd_kd_filter,
-                        macd_kd_window=macd_kd_window
-                    )
-                    if result:
-                        # 銘柄名、セクター、業種を追加
-                        result['symbol_name'] = symbol_names.get(symbol, '')
-                        result['sector'] = symbol_sectors.get(symbol, '')
-                        result['industry'] = symbol_industries.get(symbol, '')
-                        # 出来高σ値を計算して追加（履歴保存用）
-                        try:
-                            import pandas as pd
-                            df_latest = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
-                                symbol=symbol,
-                                timeframe='1d',
-                                source='yahoo',
-                                include_temporary=True
-                            )
-                            if not df_latest.empty and len(df_latest) >= 5 and result.get('latest_volume') is not None:
-                                volumes = df_latest['volume'].tail(20)  # 過去20日
-                                if len(volumes) >= 5:
-                                    mean_volume = volumes.mean()
-                                    std_volume = volumes.std()
-                                    if std_volume > 0:
-                                        sigma_value = (result['latest_volume'] - mean_volume) / std_volume
-                                        result['volume_sigma'] = float(sigma_value)
-                        except:
-                            pass
-                        
-                        print(f"[スクリーニング] ✓ {symbol}: 条件を満たす (価格: {result['current_price']:.2f}円)")
-                        results.append(result)
+                # 進捗コールバック関数
+                def progress_callback(symbol, current, total, result):
+                    # 進捗表示の頻度を減らす（50銘柄ごと）
+                    if current % 50 == 0 or current == 1 or current == total:
+                        print(f"[スクリーニング] 進捗: {current}/{total}")
+                    self.status_var.set(f"状態: スクリーニング実行中... ({current}/{total})")
                 
-                print(f"[スクリーニング] 完了: {len(results)}銘柄が条件を満たしました")
+                # screen_all()を使用して並列処理の恩恵を受ける
+                results = screener.screen_all(
+                    complement_today=True,
+                    progress_callback=progress_callback,
+                    check_condition1=check_condition1,
+                    check_condition2=check_condition2,
+                    check_condition3=check_condition3,
+                    check_condition4=check_condition4,
+                    check_condition5=check_condition5,
+                    check_condition6=check_condition6,
+                    check_golden_cross_5_25=check_golden_cross_5_25,
+                    check_golden_cross_25_75=check_golden_cross_25_75,
+                    check_golden_cross_5_200=check_golden_cross_5_200,
+                    golden_cross_mode=golden_cross_mode,
+                    use_macd_kd_filter=use_macd_kd_filter,
+                    macd_kd_window=macd_kd_window
+                )
                 
-                # スクリーニング結果に銘柄名、セクター、業種情報を追加
-                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
-                ohlcv_manager = OHLCVDataManager(self.db_path)
-                symbol_list = [r['symbol'] for r in results]
-                symbol_names = ohlcv_manager.get_symbol_names(symbol_list)
-                symbol_sectors = ohlcv_manager.get_symbol_sectors(symbol_list)
-                symbol_industries = ohlcv_manager.get_symbol_industries(symbol_list)
-                
+                # 銘柄名、セクター、業種、出来高σ値を追加
                 for result in results:
                     symbol = result['symbol']
-                    result['symbol_name'] = symbol_names.get(symbol, '（未取得）')
-                    result['sector'] = symbol_sectors.get(symbol, '（未取得）')
-                    result['industry'] = symbol_industries.get(symbol, '（未取得）')
+                    result['symbol_name'] = symbol_names.get(symbol, '')
+                    result['sector'] = symbol_sectors.get(symbol, '')
+                    result['industry'] = symbol_industries.get(symbol, '')
+                    # 出来高σ値を計算して追加（履歴保存用）
+                    try:
+                        import pandas as pd
+                        df_latest = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                            symbol=symbol,
+                            timeframe='1d',
+                            source='yahoo',
+                            include_temporary=True
+                        )
+                        if not df_latest.empty and len(df_latest) >= 5 and result.get('latest_volume') is not None:
+                            volumes = df_latest['volume'].tail(20)  # 過去20日
+                            if len(volumes) >= 5:
+                                mean_volume = volumes.mean()
+                                std_volume = volumes.std()
+                                if std_volume > 0:
+                                    sigma_value = (result['latest_volume'] - mean_volume) / std_volume
+                                    result['volume_sigma'] = float(sigma_value)
+                    except:
+                        pass
+                
+                print(f"[スクリーニング] 完了: {len(results)}銘柄が条件を満たしました")
                 
                 # スクリーニング履歴を保存
                 try:
