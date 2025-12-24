@@ -567,6 +567,66 @@ class JPX400Screener:
             'ma75': float(latest['ma75'])
         }
     
+    def check_golden_cross_5_200(self, df: pd.DataFrame, days_ago: int = 0) -> Dict:
+        """
+        5MA/200MAのゴールデンクロスをチェック
+        
+        Args:
+            df: 日足データ（移動平均線を含む）
+            days_ago: 何日前のクロスをチェックするか（0=最新、1=1日前など）
+            
+        Returns:
+            dict: {
+                'has_crossed': bool,  # クロスしているか（現在5MA > 200MA）
+                'just_crossed': bool,  # 直近でクロスしたか（前日は5MA < 200MA、今日は5MA > 200MA）
+                'cross_date': Optional[date],  # クロスした日付（just_crossedがTrueの場合）
+                'ma5': float,  # 現在の5MA
+                'ma200': float  # 現在の200MA
+            }
+        """
+        if len(df) < max(200, days_ago + 1):
+            return {
+                'has_crossed': False,
+                'just_crossed': False,
+                'cross_date': None,
+                'ma5': None,
+                'ma200': None
+            }
+        
+        latest_idx = len(df) - 1 - days_ago
+        if latest_idx < 1:
+            return {
+                'has_crossed': False,
+                'just_crossed': False,
+                'cross_date': None,
+                'ma5': None,
+                'ma200': None
+            }
+        
+        latest = df.iloc[latest_idx]
+        prev = df.iloc[latest_idx - 1]
+        
+        # 現在の状態
+        has_crossed = latest['ma5'] > latest['ma200']
+        
+        # 直近でクロスしたか（前日は5MA < 200MA、今日は5MA > 200MA）
+        just_crossed = (
+            has_crossed and
+            prev['ma5'] <= prev['ma200']
+        )
+        
+        cross_date = None
+        if just_crossed:
+            cross_date = df.index[latest_idx].date()
+        
+        return {
+            'has_crossed': has_crossed,
+            'just_crossed': just_crossed,
+            'cross_date': cross_date,
+            'ma5': float(latest['ma5']),
+            'ma200': float(latest['ma200'])
+        }
+    
     def screen_symbol(
         self,
         symbol: str,
@@ -579,6 +639,7 @@ class JPX400Screener:
         check_condition6: bool = False,
         check_golden_cross_5_25: bool = False,
         check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = 'just_crossed',  # 'just_crossed': 直近でクロス, 'has_crossed': クロス中
         use_macd_kd_filter: Optional[bool] = None,
         macd_kd_window: Optional[int] = None
@@ -597,6 +658,7 @@ class JPX400Screener:
             check_condition6: 条件6（200MAが上向き）をチェックするか
             check_golden_cross_5_25: 5MA/25MAのゴールデンクロスをチェックするか
             check_golden_cross_25_75: 25MA/75MAのゴールデンクロスをチェックするか
+            check_golden_cross_5_200: 5MA/200MAのゴールデンクロスをチェックするか
             golden_cross_mode: ゴールデンクロスの判定モード
                 - 'just_crossed': 直近でクロスした銘柄のみ（推奨）
                 - 'has_crossed': 現在クロスしている銘柄（既にクロス済みも含む）
@@ -683,6 +745,7 @@ class JPX400Screener:
             condition6_result = True
             golden_cross_5_25_result = None
             golden_cross_25_75_result = None
+            golden_cross_5_200_result = None
             
             if check_condition1:
                 condition1_result = self.check_condition1_ma_order(df_daily)
@@ -719,6 +782,15 @@ class JPX400Screener:
                         return None
                 elif golden_cross_mode == 'has_crossed':
                     if not golden_cross_25_75_result['has_crossed']:
+                        return None
+            
+            if check_golden_cross_5_200:
+                golden_cross_5_200_result = self.check_golden_cross_5_200(df_daily)
+                if golden_cross_mode == 'just_crossed':
+                    if not golden_cross_5_200_result['just_crossed']:
+                        return None
+                elif golden_cross_mode == 'has_crossed':
+                    if not golden_cross_5_200_result['has_crossed']:
                         return None
             
             # 選択された条件をすべて満たす場合
@@ -772,6 +844,9 @@ class JPX400Screener:
                 
                 if check_golden_cross_25_75 and golden_cross_25_75_result:
                     result['golden_cross_25_75'] = golden_cross_25_75_result
+                
+                if check_golden_cross_5_200 and golden_cross_5_200_result:
+                    result['golden_cross_5_200'] = golden_cross_5_200_result
 
                 # MACD/KD近接情報を追加
                 if macd_kd_proximity_result is not None:
@@ -797,6 +872,7 @@ class JPX400Screener:
         check_condition6: bool = False,
         check_golden_cross_5_25: bool = False,
         check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = 'just_crossed',
         use_macd_kd_filter: Optional[bool] = None,
         macd_kd_window: Optional[int] = None
@@ -815,6 +891,7 @@ class JPX400Screener:
             check_condition6: 条件6（200MAが上向き）をチェックするか
             check_golden_cross_5_25: 5MA/25MAのゴールデンクロスをチェックするか
             check_golden_cross_25_75: 25MA/75MAのゴールデンクロスをチェックするか
+            check_golden_cross_5_200: 5MA/200MAのゴールデンクロスをチェックするか
             golden_cross_mode: ゴールデンクロスの判定モード
                 - 'just_crossed': 直近でクロスした銘柄のみ（推奨）
                 - 'has_crossed': 現在クロスしている銘柄（既にクロス済みも含む）
@@ -881,6 +958,7 @@ class JPX400Screener:
                 check_condition6=check_condition6,
                 check_golden_cross_5_25=check_golden_cross_5_25,
                 check_golden_cross_25_75=check_golden_cross_25_75,
+                check_golden_cross_5_200=check_golden_cross_5_200,
                 golden_cross_mode=golden_cross_mode,
                 use_macd_kd_filter=use_macd_kd_filter,
                 macd_kd_window=macd_kd_window
@@ -952,6 +1030,13 @@ class JPX400Screener:
                     print(f"   ✓ 25MA/75MAゴールデンクロス: {gc_25_75['cross_date']}に発生")
                 elif gc_25_75['has_crossed']:
                     print(f"   ✓ 25MA/75MAゴールデンクロス: クロス中（25MA={gc_25_75['ma25']:.2f} > 75MA={gc_25_75['ma75']:.2f}）")
+            
+            if 'golden_cross_5_200' in result:
+                gc_5_200 = result['golden_cross_5_200']
+                if gc_5_200['just_crossed']:
+                    print(f"   ✓ 5MA/200MAゴールデンクロス: {gc_5_200['cross_date']}に発生")
+                elif gc_5_200['has_crossed']:
+                    print(f"   ✓ 5MA/200MAゴールデンクロス: クロス中（5MA={gc_5_200['ma5']:.2f} > 200MA={gc_5_200['ma200']:.2f}）")
             
             latest = result['latest_candle']
             prev = result['prev_candle']

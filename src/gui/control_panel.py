@@ -243,6 +243,7 @@ class ControlPanel(tk.Tk):
         check_condition6: bool = False,
         check_golden_cross_5_25: bool = False,
         check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = 'just_crossed',
         use_macd_kd_filter: bool = True,
         macd_kd_window: int = 3,
@@ -256,8 +257,8 @@ class ControlPanel(tk.Tk):
             self.screening_ui.show_results(
                 parent_window, symbols, check_condition1, check_condition2,
                             check_condition3, check_condition4, check_condition5, check_condition6,
-                check_golden_cross_5_25, check_golden_cross_25_75, golden_cross_mode,
-                use_macd_kd_filter, macd_kd_window, is_history, executed_at,
+                check_golden_cross_5_25, check_golden_cross_25_75, check_golden_cross_5_200,
+                golden_cross_mode, use_macd_kd_filter, macd_kd_window, is_history, executed_at,
                 performance_summary=performance_summary
             )
         else:
@@ -265,8 +266,8 @@ class ControlPanel(tk.Tk):
             self.screening_ui.run_screening(
                 parent_window, symbols, check_condition1, check_condition2,
                 check_condition3, check_condition4, check_condition5, check_condition6,
-                check_golden_cross_5_25, check_golden_cross_25_75, golden_cross_mode,
-                use_macd_kd_filter, macd_kd_window
+                check_golden_cross_5_25, check_golden_cross_25_75, check_golden_cross_5_200,
+                golden_cross_mode, use_macd_kd_filter, macd_kd_window
             )
     
     def _show_chart(self, parent_window, symbol: str, symbol_name: str):

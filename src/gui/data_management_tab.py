@@ -812,11 +812,13 @@ class DataManagementTab:
         
         golden_cross_5_25_var = tk.BooleanVar(value=True)
         golden_cross_25_75_var = tk.BooleanVar(value=False)
+        golden_cross_5_200_var = tk.BooleanVar(value=False)
         golden_cross_mode_var = tk.StringVar(value="just_crossed")
         
         ttk.Label(col2, text="ゴールデンクロス").pack(anchor="w", pady=(0, 2))
         ttk.Checkbutton(col2, text="5MA/25MAゴールデンクロス", variable=golden_cross_5_25_var).pack(anchor="w", pady=2)
         ttk.Checkbutton(col2, text="25MA/75MAゴールデンクロス", variable=golden_cross_25_75_var).pack(anchor="w", pady=2)
+        ttk.Checkbutton(col2, text="5MA/200MAゴールデンクロス", variable=golden_cross_5_200_var).pack(anchor="w", pady=2)
         
         golden_cross_mode_frame = ttk.Frame(col2)
         golden_cross_mode_frame.pack(anchor="w", pady=2, padx=10)
@@ -848,7 +850,7 @@ class DataManagementTab:
                 not condition3_var.get() and not condition4_var.get() and
                 not condition5_var.get() and not condition6_var.get() and
                 not golden_cross_5_25_var.get() and not golden_cross_25_75_var.get() and
-                not macd_kd_filter_var.get()):
+                not golden_cross_5_200_var.get() and not macd_kd_filter_var.get()):
                 messagebox.showwarning("警告", "少なくとも1つのスクリーニング条件を選択してください。")
                 return
 
@@ -875,6 +877,7 @@ class DataManagementTab:
                     check_condition6=condition6_var.get(),
                     check_golden_cross_5_25=golden_cross_5_25_var.get(),
                     check_golden_cross_25_75=golden_cross_25_75_var.get(),
+                    check_golden_cross_5_200=golden_cross_5_200_var.get(),
                     golden_cross_mode=golden_cross_mode_var.get(),
                     use_macd_kd_filter=macd_kd_filter_var.get(),
                     macd_kd_window=macd_kd_window
@@ -1097,6 +1100,10 @@ class DataManagementTab:
                         mode = conditions.get('golden_cross_mode', 'just_crossed')
                         mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
                         condition_texts.append(f"25/75MA GC({mode_text})")
+                    if conditions.get('check_golden_cross_5_200'):
+                        mode = conditions.get('golden_cross_mode', 'just_crossed')
+                        mode_text = "直近でクロス" if mode == "just_crossed" else "クロス中"
+                        condition_texts.append(f"5/200MA GC({mode_text})")
                     if conditions.get('use_macd_kd_filter'):
                         window = conditions.get('macd_kd_window', 1)
                         condition_texts.append(f"MACD/KD近接(±{window}営業日)")
@@ -1391,6 +1398,7 @@ class DataManagementTab:
                     check_condition6=conditions.get('check_condition6', False),
                     check_golden_cross_5_25=conditions.get('check_golden_cross_5_25', False),
                     check_golden_cross_25_75=conditions.get('check_golden_cross_25_75', False),
+                    check_golden_cross_5_200=conditions.get('check_golden_cross_5_200', False),
                     golden_cross_mode=conditions.get('golden_cross_mode', 'just_crossed'),
                     use_macd_kd_filter=conditions.get('use_macd_kd_filter', False),
                     macd_kd_window=conditions.get('macd_kd_window', 1),

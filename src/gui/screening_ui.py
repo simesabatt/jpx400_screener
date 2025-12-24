@@ -57,6 +57,7 @@ class ScreeningUI:
         check_condition6: bool = False,
         check_golden_cross_5_25: bool = False,
         check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = 'just_crossed',
         use_macd_kd_filter: bool = True,
         macd_kd_window: int = 3
@@ -75,6 +76,7 @@ class ScreeningUI:
             check_condition6: 200MA上向き条件
             check_golden_cross_5_25: 5MA/25MAゴールデンクロス条件
             check_golden_cross_25_75: 25MA/75MAゴールデンクロス条件
+            check_golden_cross_5_200: 5MA/200MAゴールデンクロス条件
             golden_cross_mode: ゴールデンクロス判定モード
             use_macd_kd_filter: MACD/KD近接フィルタを使用するか
             macd_kd_window: MACD/KD近接許容日数
@@ -95,6 +97,7 @@ class ScreeningUI:
                 print(f"[スクリーニング] 条件6（200MA上向き）: {'有効' if check_condition6 else '無効'}")
                 print(f"[スクリーニング] 5MA/25MAゴールデンクロス: {'有効' if check_golden_cross_5_25 else '無効'}")
                 print(f"[スクリーニング] 25MA/75MAゴールデンクロス: {'有効' if check_golden_cross_25_75 else '無効'}")
+                print(f"[スクリーニング] 5MA/200MAゴールデンクロス: {'有効' if check_golden_cross_5_200 else '無効'}")
                 print(f"[スクリーニング] ゴールデンクロス判定モード: {golden_cross_mode}")
                 print(f"[スクリーニング] MACD/KD近接フィルタ: {'有効' if use_macd_kd_filter else '無効'} (±{macd_kd_window}営業日)")
                 
@@ -131,6 +134,7 @@ class ScreeningUI:
                         check_condition6=check_condition6,
                         check_golden_cross_5_25=check_golden_cross_5_25,
                         check_golden_cross_25_75=check_golden_cross_25_75,
+                        check_golden_cross_5_200=check_golden_cross_5_200,
                         golden_cross_mode=golden_cross_mode,
                         use_macd_kd_filter=use_macd_kd_filter,
                         macd_kd_window=macd_kd_window
@@ -192,6 +196,7 @@ class ScreeningUI:
                         'check_condition6': check_condition6,
                         'check_golden_cross_5_25': check_golden_cross_5_25,
                         'check_golden_cross_25_75': check_golden_cross_25_75,
+                        'check_golden_cross_5_200': check_golden_cross_5_200,
                         'golden_cross_mode': golden_cross_mode,
                         'use_macd_kd_filter': use_macd_kd_filter,
                         'macd_kd_window': macd_kd_window
@@ -205,8 +210,8 @@ class ScreeningUI:
                     parent_window.after(0, lambda: self.show_results(
                         parent_window, results, check_condition1, check_condition2,
                         check_condition3, check_condition4, check_condition5, check_condition6,
-                        check_golden_cross_5_25, check_golden_cross_25_75, golden_cross_mode,
-                        use_macd_kd_filter, macd_kd_window
+                        check_golden_cross_5_25, check_golden_cross_25_75, check_golden_cross_5_200,
+                        golden_cross_mode, use_macd_kd_filter, macd_kd_window
                     ))
                 else:
                     print("[スクリーニング] 条件を満たす銘柄はありませんでした")
@@ -245,6 +250,7 @@ class ScreeningUI:
         check_condition6: bool = False,
         check_golden_cross_5_25: bool = False,
         check_golden_cross_25_75: bool = False,
+        check_golden_cross_5_200: bool = False,
         golden_cross_mode: str = "just_crossed",
         use_macd_kd_filter: bool = False,
         macd_kd_window: int = 1,
@@ -259,7 +265,7 @@ class ScreeningUI:
             parent_window: 親ウィンドウ
             results: スクリーニング結果リスト
             check_condition1～check_condition6: 各種条件フラグ
-            check_golden_cross_5_25, check_golden_cross_25_75: ゴールデンクロス条件
+            check_golden_cross_5_25, check_golden_cross_25_75, check_golden_cross_5_200: ゴールデンクロス条件
             golden_cross_mode: ゴールデンクロス判定モード
             use_macd_kd_filter: MACD/KDフィルタ使用フラグ
             macd_kd_window: MACD/KD近接許容日数
@@ -306,6 +312,8 @@ class ScreeningUI:
             condition_text.append(f"5/25GC({golden_cross_mode})")
         if check_golden_cross_25_75:
             condition_text.append(f"25/75GC({golden_cross_mode})")
+        if check_golden_cross_5_200:
+            condition_text.append(f"5/200GC({golden_cross_mode})")
         if use_macd_kd_filter:
             condition_text.append(f"MACD/KD近接(±{macd_kd_window}営業日)")
         
@@ -341,7 +349,7 @@ class ScreeningUI:
             columns = (
                 "銘柄コード", "銘柄名", "セクター", "業種",
                 "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "状態",
-                "GC 5/25", "GC 25/75",
+                "GC 5/25", "GC 25/75", "GC 5/200",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         tree = ttk.Treeview(
@@ -471,6 +479,7 @@ class ScreeningUI:
             tree.heading("状態", text="状態")
             tree.heading("GC 5/25", text="GC 5/25")
             tree.heading("GC 25/75", text="GC 25/75")
+            tree.heading("GC 5/200", text="GC 5/200")
             tree.heading("5MA乖離率", text="5MA乖離率(%)")
             tree.heading("25MA乖離率", text="25MA乖離率(%)")
             tree.heading("75MA乖離率", text="75MA乖離率(%)")
@@ -509,6 +518,7 @@ class ScreeningUI:
             tree.column("状態", width=70, anchor="center")
             tree.column("GC 5/25", width=80, anchor="center")
             tree.column("GC 25/75", width=80, anchor="center")
+            tree.column("GC 5/200", width=80, anchor="center")
             tree.column("5MA乖離率", width=80, anchor="e")
             tree.column("25MA乖離率", width=80, anchor="e")
             tree.column("75MA乖離率", width=80, anchor="e")
@@ -660,8 +670,10 @@ class ScreeningUI:
 
             gc5_25 = result.get("golden_cross_5_25", {})
             gc25_75 = result.get("golden_cross_25_75", {})
+            gc5_200 = result.get("golden_cross_5_200", {})
             gc5_25_str = "直近GC" if gc5_25.get("just_crossed") else "クロス中" if gc5_25.get("has_crossed") else "-"
             gc25_75_str = "直近GC" if gc25_75.get("just_crossed") else "クロス中" if gc25_75.get("has_crossed") else "-"
+            gc5_200_str = "直近GC" if gc5_200.get("just_crossed") else "クロス中" if gc5_200.get("has_crossed") else "-"
             
             # 履歴表示の場合は追加の列を含める
             if is_history:
@@ -713,6 +725,7 @@ class ScreeningUI:
                         status,
                         gc5_25_str,
                         gc25_75_str,
+                        gc5_200_str,
                         ma5_str,
                         ma25_str,
                         ma75_str,
