@@ -191,11 +191,15 @@ class ControlPanel(tk.Tk):
             # 財務指標取得の自動実行コールバック
             financial_metrics_callback = lambda: self.market_conditions.auto_fetch_financial_metrics()
             
+            # NC比率データ更新の自動実行コールバック
+            net_cash_ratio_update_callback = lambda: self.data_management.auto_update_net_cash_ratio_data()
+            
             self.auto_task_manager.start(
                 jpx_collect_callback=jpx_callback,
                 sentiment_calc_callback=sentiment_calc_callback,
                 sentiment_eval_callback=sentiment_eval_callback,
-                financial_metrics_callback=financial_metrics_callback
+                financial_metrics_callback=financial_metrics_callback,
+                net_cash_ratio_update_callback=net_cash_ratio_update_callback
             )
         except Exception as e:
             print(f"[警告] 自動タスクの起動に失敗: {e}")

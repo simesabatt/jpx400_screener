@@ -22,7 +22,8 @@ class AutoTaskManager:
         jpx_collect_callback: Optional[Callable] = None,
         sentiment_calc_callback: Optional[Callable] = None,
         sentiment_eval_callback: Optional[Callable] = None,
-        financial_metrics_callback: Optional[Callable] = None
+        financial_metrics_callback: Optional[Callable] = None,
+        net_cash_ratio_update_callback: Optional[Callable] = None
     ):
         """自動タスクのスケジューリングを開始"""
         try:
@@ -85,6 +86,17 @@ class AutoTaskManager:
                     replace_existing=True
                 )
                 print("[自動実行] 財務指標取得を0:00に設定しました")
+            
+            # NC比率データ更新: 1:00に実行
+            if net_cash_ratio_update_callback:
+                self.scheduler.add_job(
+                    net_cash_ratio_update_callback,
+                    CronTrigger(hour=1, minute=0),
+                    id='net_cash_ratio_update',
+                    name='NC比率データ更新(1:00)',
+                    replace_existing=True
+                )
+                print("[自動実行] NC比率データ更新を1:00に設定しました")
             
             self.scheduler.start()
             self._running = True

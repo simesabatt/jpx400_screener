@@ -238,7 +238,7 @@ class MarketConditionsTab:
         count_v_scrollbar = ttk.Scrollbar(count_tree_frame, orient="vertical")
         count_v_scrollbar.pack(side="right", fill="y")
         
-        count_columns = ("セクター", "業種", "銘柄数", "平均PER", "平均PBR", "平均利回り", "平均ROA", "平均ROE")
+        count_columns = ("セクター", "業種", "銘柄数", "平均PER", "平均PBR", "平均利回り", "平均ROA", "平均ROE", "平均NC比率")
         self.sector_count_tree = ttk.Treeview(
             count_tree_frame,
             columns=count_columns,
@@ -260,19 +260,20 @@ class MarketConditionsTab:
         # 列の設定
         self.sector_count_tree.column("#0", width=20, stretch=False)  # ツリーアイコン用
         self.sector_count_tree.column("セクター", width=150, anchor="w")
-        self.sector_count_tree.column("業種", width=200, anchor="w")
+        self.sector_count_tree.column("業種", width=120, anchor="w")
         self.sector_count_tree.column("銘柄数", width=100, anchor="e")
         self.sector_count_tree.column("平均PER", width=80, anchor="e")
         self.sector_count_tree.column("平均PBR", width=80, anchor="e")
         self.sector_count_tree.column("平均利回り", width=90, anchor="e")
         self.sector_count_tree.column("平均ROA", width=80, anchor="e")
         self.sector_count_tree.column("平均ROE", width=80, anchor="e")
+        self.sector_count_tree.column("平均NC比率", width=100, anchor="e")
         
         for col in count_columns:
             self.sector_count_tree.heading(col, text=col)
         
         # 初期状態では空のメッセージを表示
-        self.sector_count_tree.insert("", "end", values=("分析実行後に表示されます", "", "", "", "", "", ""))
+        self.sector_count_tree.insert("", "end", values=("分析実行後に表示されます", "", "", "", "", "", "", "", ""))
         
         # 展開/折りたたみイベントを追加（セクター行の展開時に業種を表示）
         self.sector_count_tree.bind("<<TreeviewOpen>>", self._on_sector_count_open)
@@ -457,6 +458,10 @@ class MarketConditionsTab:
             
             # デバッグ情報
             print(f"[DEBUG] セクター別財務指標: {len(sector_metrics_df)}件")
+            if not sector_metrics_df.empty:
+                print(f"[DEBUG] セクター別財務指標の列: {sector_metrics_df.columns.tolist()}")
+                print(f"[DEBUG] サンプルデータ（最初の3行）:")
+                print(sector_metrics_df.head(3))
             
             # セクター別財務指標を辞書に変換
             sector_metrics_dict = {}
@@ -467,8 +472,12 @@ class MarketConditionsTab:
                         'avg_pbr': row.get('avg_pbr'),
                         'avg_dividend_yield': row.get('avg_dividend_yield'),
                         'avg_roa': row.get('avg_roa'),
-                        'avg_roe': row.get('avg_roe')
+                        'avg_roe': row.get('avg_roe'),
+                        'avg_net_cash_ratio': row.get('avg_net_cash_ratio')
                     }
+                    # NC比率のデバッグ情報
+                    if row.get('avg_net_cash_ratio') is not None:
+                        print(f"[DEBUG] {row['sector']}の平均NC比率: {row.get('avg_net_cash_ratio')}")
                 print(f"[DEBUG] セクター別財務指標辞書: {len(sector_metrics_dict)}件")
             else:
                 print("[DEBUG] セクター別財務指標データが空です")
@@ -506,7 +515,8 @@ class MarketConditionsTab:
                     format_metric(sector_metrics.get('avg_pbr'), decimals=2),
                     format_metric(sector_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
                     format_metric(sector_metrics.get('avg_roa'), is_percent=True, decimals=2),
-                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_net_cash_ratio'), decimals=4)
                 ),
                 tags=("sector",)
             )
@@ -544,7 +554,8 @@ class MarketConditionsTab:
                         'avg_pbr': row.get('avg_pbr'),
                         'avg_dividend_yield': row.get('avg_dividend_yield'),
                         'avg_roa': row.get('avg_roa'),
-                        'avg_roe': row.get('avg_roe')
+                        'avg_roe': row.get('avg_roe'),
+                        'avg_net_cash_ratio': row.get('avg_net_cash_ratio')
                     }
                 print(f"[DEBUG] セクター別財務指標辞書: {len(sector_metrics_dict)}件")
             else:
@@ -559,7 +570,8 @@ class MarketConditionsTab:
                         'avg_per': row.get('avg_per'),
                         'avg_pbr': row.get('avg_pbr'),
                         'avg_dividend_yield': row.get('avg_dividend_yield'),
-                        'avg_roe': row.get('avg_roe')
+                        'avg_roe': row.get('avg_roe'),
+                        'avg_net_cash_ratio': row.get('avg_net_cash_ratio')
                     }
                 print(f"[DEBUG] セクター・業種別財務指標辞書: {len(sector_industry_metrics_dict)}件")
             else:
@@ -615,7 +627,8 @@ class MarketConditionsTab:
                     format_metric(sector_metrics.get('avg_pbr'), decimals=2),
                     format_metric(sector_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
                     format_metric(sector_metrics.get('avg_roa'), is_percent=True, decimals=2),
-                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                    format_metric(sector_metrics.get('avg_roe'), is_percent=True, decimals=2),
+                    format_metric(sector_metrics.get('avg_net_cash_ratio'), decimals=4)
                 ),
                 tags=("sector",)
             )
@@ -628,7 +641,7 @@ class MarketConditionsTab:
                 self.sector_count_tree.insert(
                     sector_item, "end",
                     text="",
-                    values=("", "", "", "", "", "", "", ""),
+                    values=("", "", "", "", "", "", "", "", ""),
                     tags=("dummy",)
                 )
         
@@ -1195,8 +1208,18 @@ class MarketConditionsTab:
                         'avg_pbr': row.get('avg_pbr'),
                         'avg_dividend_yield': row.get('avg_dividend_yield'),
                         'avg_roa': row.get('avg_roa'),
-                        'avg_roe': row.get('avg_roe')
+                        'avg_roe': row.get('avg_roe'),
+                        'avg_net_cash_ratio': row.get('avg_net_cash_ratio')
                     }
+                # デバッグ情報
+                print(f"[DEBUG] _expand_sector: セクター・業種別財務指標辞書: {len(sector_industry_metrics_dict)}件")
+                # サンプルデータを表示
+                if sector_industry_metrics_dict:
+                    sample_key = list(sector_industry_metrics_dict.keys())[0]
+                    sample_data = sector_industry_metrics_dict[sample_key]
+                    print(f"[DEBUG] _expand_sector: サンプルデータ ({sample_key}): {sample_data}")
+            else:
+                print("[DEBUG] _expand_sector: セクター・業種別財務指標データが空です")
             
             # 財務指標をフォーマットする関数
             def format_metric(value, is_percent=False, decimals=2):
@@ -1229,7 +1252,8 @@ class MarketConditionsTab:
                             format_metric(industry_metrics.get('avg_pbr'), decimals=2),
                             format_metric(industry_metrics.get('avg_dividend_yield'), is_percent=True, decimals=2),
                             format_metric(industry_metrics.get('avg_roa'), is_percent=True, decimals=2),
-                            format_metric(industry_metrics.get('avg_roe'), is_percent=True, decimals=2)
+                            format_metric(industry_metrics.get('avg_roe'), is_percent=True, decimals=2),
+                            format_metric(industry_metrics.get('avg_net_cash_ratio'), decimals=4)
                     ),
                     tags=("industry",)
                 )
@@ -1391,6 +1415,11 @@ class MarketConditionsTab:
                 financial_metrics_manager = FinancialMetricsManager(self.db_path)
                 financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(sector_industry_symbols)
                 
+                # NC比率を取得
+                from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
+                net_cash_ratio_manager = NetCashRatioManager(self.db_path)
+                net_cash_ratio_dict = net_cash_ratio_manager.get_net_cash_ratio_batch(sector_industry_symbols)
+                
                 # ウィンドウを表示
                 self.parent.after(0, lambda: self._show_sector_symbols_window(
                     f"{selected_sector} - {selected_industry}", 
@@ -1399,7 +1428,8 @@ class MarketConditionsTab:
                     sectors_dict, 
                     industries_dict, 
                     symbol_stats,
-                    financial_metrics_dict
+                    financial_metrics_dict,
+                    net_cash_ratio_dict
                 ))
                 
                 self.status_var.set("状態: 待機中")
@@ -1509,9 +1539,14 @@ class MarketConditionsTab:
                 financial_metrics_manager = FinancialMetricsManager(self.db_path)
                 financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(sector_symbols)
                 
+                # NC比率を取得
+                from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
+                net_cash_ratio_manager = NetCashRatioManager(self.db_path)
+                net_cash_ratio_dict = net_cash_ratio_manager.get_net_cash_ratio_batch(sector_symbols)
+                
                 # ウィンドウを表示
                 self.parent.after(0, lambda: self._show_sector_symbols_window(
-                    selected_sector, sector_symbols, symbol_names, sectors_dict, industries_dict, symbol_stats, financial_metrics_dict
+                    selected_sector, sector_symbols, symbol_names, sectors_dict, industries_dict, symbol_stats, financial_metrics_dict, net_cash_ratio_dict
                 ))
                 
                 self.status_var.set("状態: 待機中")
@@ -1539,7 +1574,8 @@ class MarketConditionsTab:
         sectors_dict: Dict[str, str],
         industries_dict: Dict[str, str],
         symbol_stats: Dict[str, dict],
-        financial_metrics_dict: Optional[Dict[str, Dict[str, Optional[float]]]] = None
+        financial_metrics_dict: Optional[Dict[str, Dict[str, Optional[float]]]] = None,
+        net_cash_ratio_dict: Optional[Dict[str, Optional[float]]] = None
     ):
         """セクター別銘柄一覧を別ウィンドウで表示"""
         window = tk.Toplevel(self.parent)
@@ -1570,7 +1606,7 @@ class MarketConditionsTab:
         h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal")
         h_scrollbar.pack(side="bottom", fill="x")
         
-        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "PER", "PBR", "利回り", "ROA", "ROE", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
+        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
         tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1594,6 +1630,7 @@ class MarketConditionsTab:
         tree.column("利回り", width=90, anchor="e")
         tree.column("ROA", width=80, anchor="e")
         tree.column("ROE", width=80, anchor="e")
+        tree.column("NC比率", width=100, anchor="e")
         tree.column("データ件数", width=100, anchor="e")
         tree.column("最初の日付", width=120, anchor="center")
         tree.column("最後の日付", width=120, anchor="center")
@@ -1613,7 +1650,7 @@ class MarketConditionsTab:
             
             items = [(tree.set(item, column), item) for item in tree.get_children('')]
             
-            if column in ["現在株価", "σ値", "データ件数", "最新出来高", "PER", "PBR", "利回り", "ROA", "ROE"]:
+            if column in ["現在株価", "σ値", "データ件数", "最新出来高", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率"]:
                 def sort_key(x):
                     try:
                         val = x[0].replace('σ', '').replace('+', '').replace(',', '').replace('N/A', '0').strip()
@@ -1697,6 +1734,10 @@ class MarketConditionsTab:
             roa = f"{metrics.get('roa', 0):.2f}%" if metrics.get('roa') is not None else "-"
             roe = f"{metrics.get('roe', 0):.2f}%" if metrics.get('roe') is not None else "-"
             
+            # NC比率を取得
+            net_cash_ratio = net_cash_ratio_dict.get(symbol) if net_cash_ratio_dict else None
+            nc_ratio_str = f"{net_cash_ratio:.4f}" if net_cash_ratio is not None else "-"
+            
             tree.insert("", "end", values=(
                 symbol,
                 name,
@@ -1707,6 +1748,7 @@ class MarketConditionsTab:
                 dividend_yield,
                 roa,
                 roe,
+                nc_ratio_str,
                 f"{data_count:,}" if data_count > 0 else "0",
                 first_date,
                 last_date,

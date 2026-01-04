@@ -94,6 +94,11 @@ class NetCashRatioManager:
         """
         貸借対照表から値を取得（複数の候補項目名を試行）
         
+        検索順序:
+        1. 完全一致（大文字小文字を区別する）
+        2. 完全一致（大文字小文字を区別しない）
+        3. 部分一致（大文字小文字を区別しない）
+        
         Args:
             balance_sheet: 貸借対照表のDataFrame
             candidates: 試行する項目名のリスト（優先順位順）
@@ -111,13 +116,41 @@ class NetCashRatioManager:
         elif latest_year is None:
             return None
         
+        # インデックスを文字列のリストに変換（検索効率化のため）
+        index_list = list(balance_sheet.index)
+        index_lower = [str(idx).lower() for idx in index_list]
+        
         # 候補項目名を順に試行
         for candidate in candidates:
+            candidate_lower = candidate.lower()
+            
+            # 1. 完全一致（大文字小文字を区別する）
             try:
                 if candidate in balance_sheet.index:
                     value = balance_sheet.loc[candidate, latest_year]
                     if pd.notna(value) and value != 0:
                         return float(value)
+            except (KeyError, IndexError):
+                pass
+            
+            # 2. 完全一致（大文字小文字を区別しない）
+            try:
+                if candidate_lower in index_lower:
+                    idx_pos = index_lower.index(candidate_lower)
+                    actual_index = index_list[idx_pos]
+                    value = balance_sheet.loc[actual_index, latest_year]
+                    if pd.notna(value) and value != 0:
+                        return float(value)
+            except (KeyError, IndexError, ValueError):
+                pass
+            
+            # 3. 部分一致（大文字小文字を区別しない）
+            try:
+                for idx, idx_lower in zip(index_list, index_lower):
+                    if candidate_lower in idx_lower:
+                        value = balance_sheet.loc[idx, latest_year]
+                        if pd.notna(value) and value != 0:
+                            return float(value)
             except (KeyError, IndexError):
                 continue
         
@@ -258,7 +291,8 @@ class NetCashRatioManager:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         use_cache: bool = True,
-        force_update: bool = False
+        force_update: bool = False,
+        cache_only: bool = False
     ) -> Optional[pd.DataFrame]:
         """
         貸借対照表データを取得（キャッシュ優先）
@@ -269,6 +303,7 @@ class NetCashRatioManager:
             retry_delay: リトライ時の基本待機時間（秒）
             use_cache: キャッシュを使用するか（Trueの場合、キャッシュがあればそれを使用）
             force_update: 強制更新（キャッシュを無視してYahoo Financeから取得）
+            cache_only: キャッシュのみを使用（ネットワークアクセスなし）
         
         Returns:
             pd.DataFrame: 貸借対照表データ、またはNone
@@ -318,6 +353,10 @@ class NetCashRatioManager:
                                 return df
                             except Exception as e:
                                 print(f"[NetCashRatioManager] キャッシュデータの復元エラー {symbol}: {e}")
+        
+        # cache_only=Trueの場合、キャッシュにデータがない場合はNoneを返す
+        if cache_only:
+            return None
         
         # キャッシュにない、またはforce_update=Trueの場合はYahoo Financeから取得
         ticker_symbol = f"{symbol}.T"
@@ -369,7 +408,8 @@ class NetCashRatioManager:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         use_cache: bool = True,
-        force_update: bool = False
+        force_update: bool = False,
+        cache_only: bool = False
     ) -> Optional[float]:
         """
         ネットキャッシュ比率を計算（キャッシュ優先）
@@ -382,6 +422,7 @@ class NetCashRatioManager:
             retry_delay: リトライ時の基本待機時間（秒）
             use_cache: キャッシュを使用するか
             force_update: 強制更新（キャッシュを無視）
+            cache_only: キャッシュのみを使用（ネットワークアクセスなし）
         
         Returns:
             float: ネットキャッシュ比率、またはNone（データ不足時）
@@ -391,10 +432,13 @@ class NetCashRatioManager:
         try:
             # 貸借対照表を取得（キャッシュ優先）
             balance_sheet = self.fetch_balance_sheet_data(
-                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update, cache_only=cache_only
             )
             if balance_sheet is None or balance_sheet.empty:
-                print(f"[ネットキャッシュ比率計算] {symbol}: 貸借対照表データが取得できませんでした")
+                if cache_only:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: キャッシュに貸借対照表データがありません")
+                else:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: 貸借対照表データが取得できませんでした")
                 return None
             
             # 時価総額を取得（キャッシュ優先）
@@ -403,6 +447,9 @@ class NetCashRatioManager:
                 market_cap = self._get_market_cap_from_cache(symbol)
             
             if market_cap is None:
+                if cache_only:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: キャッシュに時価総額データがありません")
+                    return None
                 # キャッシュにない、またはforce_update=Trueの場合はYahoo Financeから取得
                 ticker = yf.Ticker(ticker_symbol)
                 info = ticker.info
@@ -425,9 +472,11 @@ class NetCashRatioManager:
             latest_year = balance_sheet.columns[0]
             
             # 流動資産を取得
+            # 部分一致検索により「Current Assets」を含む項目も検索される
             current_assets_candidates = [
                 'Current Assets',
-                'Total Current Assets'
+                'Total Current Assets',
+                # 部分一致検索で「Current Assets」を含む項目も検索される
             ]
             current_assets = self._get_balance_sheet_value(
                 balance_sheet, current_assets_candidates, latest_year
@@ -462,20 +511,32 @@ class NetCashRatioManager:
                     investment_securities += value
             
             # 有利子負債を取得
+            # 優先順位: Total Debt > (Long Term Debt + Current Debt) > (Long Term Debt And Capital Lease Obligation + Current Debt And Capital Lease Obligation)
             debt_candidates = [
                 'Total Debt'
             ]
             total_debt = self._get_balance_sheet_value(
                 balance_sheet, debt_candidates, latest_year
             )
+            
             if total_debt is None:
                 # Total Debtが取得できない場合は、Long Term Debt + Current Debtを試行
+                long_term_debt_candidates = [
+                    'Long Term Debt',
+                    'Long Term Debt And Capital Lease Obligation'
+                ]
                 long_term_debt = self._get_balance_sheet_value(
-                    balance_sheet, ['Long Term Debt'], latest_year
+                    balance_sheet, long_term_debt_candidates, latest_year
                 ) or 0.0
+                
+                current_debt_candidates = [
+                    'Current Debt',
+                    'Current Debt And Capital Lease Obligation'
+                ]
                 current_debt = self._get_balance_sheet_value(
-                    balance_sheet, ['Current Debt'], latest_year
+                    balance_sheet, current_debt_candidates, latest_year
                 ) or 0.0
+                
                 total_debt = long_term_debt + current_debt
                 if total_debt == 0:
                     print(f"[ネットキャッシュ比率計算] {symbol}: 有利子負債（Total Debt/Long Term Debt/Current Debt）が取得できませんでした")
@@ -537,7 +598,8 @@ class NetCashRatioManager:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         use_cache: bool = True,
-        force_update: bool = False
+        force_update: bool = False,
+        cache_only: bool = False
     ) -> Dict[str, any]:
         """
         ネットキャッシュ比率を取得してデータベースに保存（ワンステップ）
@@ -548,6 +610,7 @@ class NetCashRatioManager:
             retry_delay: リトライ時の基本待機時間（秒）
             use_cache: キャッシュを使用するか
             force_update: 強制更新（キャッシュを無視）
+            cache_only: キャッシュのみを使用（ネットワークアクセスなし）
         
         Returns:
             Dict: 結果
@@ -556,7 +619,7 @@ class NetCashRatioManager:
                 - error: エラーメッセージ（失敗時）
         """
         net_cash_ratio = self.calculate_net_cash_ratio(
-            symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+            symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update, cache_only=cache_only
         )
         
         if net_cash_ratio is not None:
@@ -577,23 +640,17 @@ class NetCashRatioManager:
                 'error': 'ネットキャッシュ比率データが取得できませんでした'
             }
     
-    def fetch_and_save_batch(
+    def calculate_from_cache_batch(
         self,
         symbols: List[str],
-        progress_callback: Optional[Callable] = None,
-        max_retries: int = 3,
-        retry_delay: float = 1.0,
-        use_cache: bool = True,
-        force_update: bool = False
+        progress_callback: Optional[Callable] = None
     ) -> Dict[str, Dict]:
         """
-        複数銘柄のネットキャッシュ比率を一括取得して保存
+        キャッシュからネットキャッシュ比率を一括計算して保存（ネットワークアクセスなし）
         
         Args:
             symbols: 銘柄コードのリスト
             progress_callback: 進捗コールバック関数（symbol, success, current, total）を受け取る
-            max_retries: 最大リトライ回数
-            retry_delay: リトライ時の基本待機時間（秒）
         
         Returns:
             Dict[str, Dict]: 結果の辞書
@@ -608,15 +665,85 @@ class NetCashRatioManager:
         }
         
         total = len(symbols)
-        print(f"[ネットキャッシュ比率取得] 開始: {total}銘柄のネットキャッシュ比率を取得します")
+        print(f"[ネットキャッシュ比率計算] 開始: {total}銘柄のネットキャッシュ比率をキャッシュから計算します")
         
         for i, symbol in enumerate(symbols, 1):
             # 進捗ログを出力
             if i % 10 == 0 or i == 1 or i == total:
-                print(f"[ネットキャッシュ比率取得] 進捗: {i}/{total} ({symbol})")
+                print(f"[ネットキャッシュ比率計算] 進捗: {i}/{total} ({symbol})")
             
             result = self.fetch_and_save_net_cash_ratio(
-                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+                symbol, cache_only=True
+            )
+            
+            if result['success']:
+                results['success_count'] += 1
+                results['results'][symbol] = result
+                if i % 10 == 0 or i == 1 or i == total:
+                    print(f"  → ネットキャッシュ比率: {result['net_cash_ratio']:.4f}")
+            else:
+                results['error_count'] += 1
+                results['results'][symbol] = result
+                if i % 10 == 0 or i == 1 or i == total:
+                    print(f"  → エラー: {result.get('error', '不明なエラー')}")
+            
+            # 進捗コールバックを呼び出し
+            if progress_callback:
+                progress_callback(symbol, result['success'], i, total)
+        
+        print(f"[ネットキャッシュ比率計算] 完了: 成功 {results['success_count']}件、エラー {results['error_count']}件")
+        return results
+    
+    def fetch_and_save_batch(
+        self,
+        symbols: List[str],
+        progress_callback: Optional[Callable] = None,
+        max_retries: int = 3,
+        retry_delay: float = 1.0,
+        use_cache: bool = True,
+        force_update: bool = False,
+        cache_only: bool = False
+    ) -> Dict[str, Dict]:
+        """
+        複数銘柄のネットキャッシュ比率を一括取得して保存
+        
+        Args:
+            symbols: 銘柄コードのリスト
+            progress_callback: 進捗コールバック関数（symbol, success, current, total）を受け取る
+            max_retries: 最大リトライ回数
+            retry_delay: リトライ時の基本待機時間（秒）
+            use_cache: キャッシュを使用するか
+            force_update: 強制更新（キャッシュを無視）
+            cache_only: キャッシュのみを使用（ネットワークアクセスなし）
+        
+        Returns:
+            Dict[str, Dict]: 結果の辞書
+                - success_count: 成功数
+                - error_count: エラー数
+                - results: 各銘柄の結果
+        """
+        results = {
+            'success_count': 0,
+            'error_count': 0,
+            'results': {}
+        }
+        
+        total = len(symbols)
+        if cache_only:
+            print(f"[ネットキャッシュ比率計算] 開始: {total}銘柄のネットキャッシュ比率をキャッシュから計算します")
+        else:
+            print(f"[ネットキャッシュ比率取得] 開始: {total}銘柄のネットキャッシュ比率を取得します")
+        
+        for i, symbol in enumerate(symbols, 1):
+            # 進捗ログを出力
+            if i % 10 == 0 or i == 1 or i == total:
+                if cache_only:
+                    print(f"[ネットキャッシュ比率計算] 進捗: {i}/{total} ({symbol})")
+                else:
+                    print(f"[ネットキャッシュ比率取得] 進捗: {i}/{total} ({symbol})")
+            
+            result = self.fetch_and_save_net_cash_ratio(
+                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update, cache_only=cache_only
             )
             
             if result['success']:

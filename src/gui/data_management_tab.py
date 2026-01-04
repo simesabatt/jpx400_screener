@@ -59,7 +59,6 @@ class DataManagementTab:
         self._jpx400_collecting = False
         self._stop_collecting = False
         self._fetching_names = False
-        self._fetching_net_cash_ratio = False
         self._updating_net_cash_ratio_data = False
         
         # UI構築
@@ -131,16 +130,7 @@ class DataManagementTab:
         )
         self.show_symbols_button.pack(side="left", padx=pad)
         
-        # NC比率取得ボタン（2段目に移動）
-        self.fetch_net_cash_ratio_button = ttk.Button(
-            bottom_button_frame,
-            text="NC比率取得",
-            command=self.on_fetch_net_cash_ratio,
-            width=20
-        )
-        self.fetch_net_cash_ratio_button.pack(side="left", padx=pad)
-        
-        # NC比率データ更新ボタン（キャッシュを強制更新）
+        # NC比率データ更新ボタン（Yahoo Financeから最新データを取得してキャッシュを更新し、計算）
         self.update_net_cash_ratio_data_button = ttk.Button(
             bottom_button_frame,
             text="NC比率データ更新",
@@ -180,6 +170,9 @@ class DataManagementTab:
             "• JPX400リスト更新: JPX400銘柄リストを最新に更新します\n"
             "• 銘柄名取得: 銘柄コードから銘柄名とセクター情報を取得します（英語名を日本語に翻訳）\n"
             "• DB銘柄一覧: データベースに保存されている銘柄を確認します\n"
+            "• NC比率データ更新: Yahoo Financeから最新の貸借対照表データを取得し、\n"
+            "  ネットキャッシュ比率（NC比率）を計算・保存します\n"
+            "  計算式: (流動資産 + 投資有価証券 × 70% - 有利子負債) ÷ 時価総額\n"
             "• スクリーニング履歴: 過去のスクリーニング結果を確認・検証します"
         )
         ttk.Label(
@@ -991,93 +984,6 @@ class DataManagementTab:
         thread = threading.Thread(target=fetch_in_thread, daemon=True)
         thread.start()
     
-    def on_fetch_net_cash_ratio(self):
-        """JPX400全銘柄のネットキャッシュ比率を取得"""
-        if self._fetching_net_cash_ratio:
-            messagebox.showwarning("警告", "ネットキャッシュ比率取得は既に実行中です。")
-            return
-        
-        result = messagebox.askyesno(
-            "確認",
-            "JPX400全銘柄のネットキャッシュ比率を取得しますか？\n\n"
-            "この処理には時間がかかる場合があります。\n"
-            "Yahoo Financeから貸借対照表データを取得します。"
-        )
-        
-        if not result:
-            return
-        
-        def fetch_in_thread():
-            try:
-                self._fetching_net_cash_ratio = True
-                self.jpx400_collect_button.config(state="disabled")
-                self.jpx400_update_list_button.config(state="disabled")
-                self.show_symbols_button.config(state="disabled")
-                self.fetch_names_button.config(state="disabled")
-                self.fetch_net_cash_ratio_button.config(state="disabled")
-                
-                from src.screening.jpx400_manager import JPX400Manager
-                from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
-                
-                # JPX400銘柄リストを取得
-                jpx400_manager = JPX400Manager()  # デフォルトのパス（data/jpx400_symbols.json）を使用
-                symbols = jpx400_manager.load_symbols()
-                
-                if not symbols:
-                    self.parent.after(0, lambda: messagebox.showinfo("情報", "JPX400銘柄リストが取得できませんでした。"))
-                    return
-                
-                self.status_var.set(f"状態: ネットキャッシュ比率取得中... (0/{len(symbols)})")
-                self.net_cash_ratio_status_var.set("")
-                
-                def progress_callback(symbol, success, current, total):
-                    if success:
-                        status = f"状態: ネットキャッシュ比率取得中... ({current}/{total}) - {symbol}"
-                    else:
-                        status = f"状態: ネットキャッシュ比率取得中... ({current}/{total}) - {symbol}: エラー"
-                    self.status_var.set(status)
-                    self.parent.update()
-                
-                net_cash_ratio_manager = NetCashRatioManager(self.db_path)
-                results = net_cash_ratio_manager.fetch_and_save_batch(
-                    symbols,
-                    progress_callback=progress_callback,
-                    use_cache=True,  # キャッシュを使用（データがあればそれを使用）
-                    force_update=False  # 強制更新しない（キャッシュがあれば使用）
-                )
-                
-                # 最新取得日時を更新
-                from datetime import datetime
-                now = datetime.now()
-                self.net_cash_ratio_status_var.set(f"最終取得: {now.strftime('%Y-%m-%d %H:%M')}")
-                
-                msg = (
-                    f"ネットキャッシュ比率取得が完了しました。\n\n"
-                    f"成功: {results['success_count']}件\n"
-                    f"エラー: {results['error_count']}件"
-                )
-                self.parent.after(0, lambda: messagebox.showinfo("完了", msg))
-            
-            except Exception as e:
-                import traceback
-                error_detail = traceback.format_exc()
-                print(f"[ERROR] ネットキャッシュ比率取得エラー: {e}")
-                print(f"[ERROR] 詳細: {error_detail}")
-                self.parent.after(0, lambda: messagebox.showerror("エラー", f"ネットキャッシュ比率取得処理でエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。"))
-            
-            finally:
-                self._fetching_net_cash_ratio = False
-                self.jpx400_collect_button.config(state="normal")
-                self.jpx400_update_list_button.config(state="normal")
-                self.show_symbols_button.config(state="normal")
-                self.fetch_names_button.config(state="normal")
-                self.fetch_net_cash_ratio_button.config(state="normal")
-                self.show_history_button.config(state="normal")
-                self.status_var.set("状態: 待機中")
-        
-        thread = threading.Thread(target=fetch_in_thread, daemon=True)
-        thread.start()
-    
     def on_update_net_cash_ratio_data(self):
         """NC比率計算に必要なデータ（貸借対照表、時価総額）を強制更新"""
         if self._updating_net_cash_ratio_data:
@@ -1101,7 +1007,6 @@ class DataManagementTab:
                 self.jpx400_update_list_button.config(state="disabled")
                 self.show_symbols_button.config(state="disabled")
                 self.fetch_names_button.config(state="disabled")
-                self.fetch_net_cash_ratio_button.config(state="disabled")
                 self.update_net_cash_ratio_data_button.config(state="disabled")
                 self.show_history_button.config(state="disabled")
                 
@@ -1160,7 +1065,6 @@ class DataManagementTab:
                 self.jpx400_update_list_button.config(state="normal")
                 self.show_symbols_button.config(state="normal")
                 self.fetch_names_button.config(state="normal")
-                self.fetch_net_cash_ratio_button.config(state="normal")
                 self.update_net_cash_ratio_data_button.config(state="normal")
                 self.show_history_button.config(state="normal")
                 self.status_var.set("状態: 待機中")
@@ -1168,22 +1072,113 @@ class DataManagementTab:
         thread = threading.Thread(target=update_in_thread, daemon=True)
         thread.start()
     
+    def auto_update_net_cash_ratio_data(self):
+        """自動実行：NC比率データ更新（確認なし）"""
+        if self._updating_net_cash_ratio_data:
+            print("[自動実行] NC比率データ更新は既に実行中です")
+            return
+        
+        def update_in_thread():
+            try:
+                self._updating_net_cash_ratio_data = True
+                self.status_var.set("状態: NC比率データ更新中（自動）...")
+                print(f"[自動実行] NC比率データ更新を開始します（{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）")
+                
+                from src.screening.jpx400_manager import JPX400Manager
+                from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
+                
+                # JPX400銘柄リストを取得
+                jpx400_manager = JPX400Manager()
+                symbols = jpx400_manager.load_symbols()
+                
+                if not symbols:
+                    print("[自動実行] JPX400銘柄リストが空です")
+                    return
+                
+                net_cash_ratio_manager = NetCashRatioManager(self.db_path)
+                # force_update=Trueで強制更新
+                results = net_cash_ratio_manager.fetch_and_save_batch(
+                    symbols,
+                    progress_callback=None,  # 自動実行では進捗コールバックなし
+                    force_update=True  # キャッシュを無視して強制更新
+                )
+                
+                # 結果をログに出力
+                success_count = results['success_count']
+                error_count = results['error_count']
+                print(f"[自動実行完了] NC比率データ更新: 成功 {success_count}銘柄, エラー {error_count}銘柄")
+                
+                # 最新更新日時を更新
+                now = datetime.now()
+                self.net_cash_ratio_status_var.set(f"最終更新: {now.strftime('%Y-%m-%d %H:%M')}")
+                
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"[自動実行エラー] NC比率データ更新で例外: {e}")
+                print(f"[自動実行エラー] 詳細: {error_detail}")
+            
+            finally:
+                self._updating_net_cash_ratio_data = False
+                self.status_var.set("状態: 待機中")
+        
+        thread = threading.Thread(target=update_in_thread, daemon=True)
+        thread.start()
+    
     def on_show_screening_history(self):
         """スクリーニング履歴一覧を表示"""
+        # ウィンドウを先に表示して、データをバックグラウンドで読み込む
+        history_window = tk.Toplevel(self.parent)
+        history_window.title("スクリーニング履歴 - 読み込み中...")
+        # デフォルトサイズを横長に拡大（一覧で勝率/平均/中央値を見やすくする）
+        history_window.geometry("1500x650")
+        
+        # 読み込み中メッセージを表示
+        loading_frame = ttk.Frame(history_window)
+        loading_frame.pack(fill="both", expand=True)
+        loading_label = ttk.Label(
+            loading_frame,
+            text="スクリーニング履歴を読み込み中...",
+            font=("", 12)
+        )
+        loading_label.pack(expand=True)
+        
+        def load_history_in_thread():
+            try:
+                from src.screening.screening_history import ScreeningHistory
+                history_manager = ScreeningHistory(self.db_path)
+                
+                # まず基本情報のみ取得（パフォーマンス計算なし）
+                history_list = history_manager.get_history_list_basic(limit=100)
+                
+                if not history_list:
+                    self.parent.after(0, lambda: messagebox.showinfo("スクリーニング履歴", "履歴がありません。"))
+                    self.parent.after(0, history_window.destroy)
+                    return
+                
+                # ウィンドウのタイトルを更新
+                self.parent.after(0, lambda: history_window.title("スクリーニング履歴"))
+                
+                # 読み込み中メッセージを削除して、実際のUIを構築
+                self.parent.after(0, lambda: self._build_history_window(history_window, history_list, history_manager))
+                
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"[ERROR] スクリーニング履歴読み込みエラー: {e}")
+                print(f"[ERROR] 詳細: {error_detail}")
+                self.parent.after(0, lambda: messagebox.showerror("エラー", f"履歴読み込みでエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。"))
+                self.parent.after(0, history_window.destroy)
+        
+        thread = threading.Thread(target=load_history_in_thread, daemon=True)
+        thread.start()
+    
+    def _build_history_window(self, history_window, history_list, history_manager):
+        """スクリーニング履歴ウィンドウを構築"""
         try:
-            from src.screening.screening_history import ScreeningHistory
-            history_manager = ScreeningHistory(self.db_path)
-            
-            history_list = history_manager.get_history_list(limit=100)
-            
-            if not history_list:
-                messagebox.showinfo("スクリーニング履歴", "履歴がありません。")
-                return
-            
-            history_window = tk.Toplevel(self.parent)
-            history_window.title("スクリーニング履歴")
-            # デフォルトサイズを横長に拡大（一覧で勝率/平均/中央値を見やすくする）
-            history_window.geometry("1500x650")
+            # 既存の読み込み中メッセージを削除
+            for widget in history_window.winfo_children():
+                widget.destroy()
             
             main_frame = ttk.Frame(history_window)
             main_frame.pack(fill="both", expand=True, padx=8, pady=8)
@@ -1262,10 +1257,10 @@ class DataManagementTab:
             # 日付でソート（新しい日付から）
             sorted_dates = sorted(history_by_date.keys(), reverse=True)
             
-            # 全銘柄パフォーマンスのキャッシュ（日付ごと）
-            all_symbols_perf_cache = {}
+            # 履歴IDとTreeviewアイテムIDのマッピング
+            history_item_map = {}  # {history_id: item_id}
             
-            # 日付ごとに処理
+            # 日付ごとに処理（基本情報のみ表示）
             for history_date in sorted_dates:
                 histories = history_by_date[history_date]
                 
@@ -1311,99 +1306,154 @@ class DataManagementTab:
                     
                     condition_str = ", ".join(condition_texts) if condition_texts else "条件なし"
                     
-                    # 勝率の整形
-                    def fmt_rate(h: int) -> str:
-                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                        total = info.get('total')
-                        rate = info.get('rate')
-                        win = info.get('win')
-                        if total and rate is not None:
-                            return f"{win}/{total} ({rate:.1f}%)"
-                        return "N/A"
-
-                    def fmt_avg(h: int) -> str:
-                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                        avg = info.get('avg')
-                        if avg is None:
-                            return "N/A"
-                        return f"{avg:+.2f}%"
-
-                    def fmt_med(h: int) -> str:
-                        info = history.get('performance_summary', {}).get('win_rates', {}).get(h, {})
-                        med = info.get('median')
-                        if med is None:
-                            return "N/A"
-                        return f"{med:+.2f}%"
-
-                    tree.insert(
+                    # パフォーマンス計算はまだ行われていないため、"計算中..."を表示
+                    item_id = tree.insert(
                         "",
                         "end",
                         values=(
                             executed_at_str,
                             f"{history['symbol_count']}件",
                             condition_str,
-                            fmt_rate(1), fmt_avg(1), fmt_med(1),
-                            fmt_rate(2), fmt_avg(2), fmt_med(2),
-                            fmt_rate(3), fmt_avg(3), fmt_med(3)
+                            "計算中...", "計算中...", "計算中...",
+                            "計算中...", "計算中...", "計算中...",
+                            "計算中...", "計算中...", "計算中..."
                         ),
                         tags=(history['id'],)
                     )
+                    history_item_map[history['id']] = item_id
                 
-                # その日の全銘柄パフォーマンス行を挿入（日付の変わり目）
-                try:
-                    # キャッシュをチェック
-                    if history_date not in all_symbols_perf_cache:
-                        all_symbols_perf = history_manager._calculate_all_symbols_performance(
-                            history_date,
-                            horizons=(1, 2, 3)
+                # 全銘柄パフォーマンス行も一旦"計算中..."で表示
+                date_str = history_date.strftime('%Y/%m/%d')
+                tree.insert(
+                    "",
+                    "end",
+                    values=(
+                        f"全銘柄({date_str})",
+                        "全銘柄",
+                        "-",
+                        "計算中...", "計算中...", "計算中...",
+                        "計算中...", "計算中...", "計算中...",
+                        "計算中...", "計算中...", "計算中..."
+                    ),
+                    tags=("all_symbols", history_date.isoformat())  # 日付もタグに含める
+                )
+            
+            # パフォーマンス計算をバックグラウンドで実行
+            def calculate_performance_in_thread():
+                # 各履歴のパフォーマンスを計算
+                for history in history_list:
+                    try:
+                        performance_summary = history_manager._calculate_future_performance_for_history(
+                            history['id'],
+                            history['executed_at']
                         )
-                        all_symbols_perf_cache[history_date] = all_symbols_perf
-                    else:
-                        all_symbols_perf = all_symbols_perf_cache[history_date]
-                    
-                    # 全銘柄行のフォーマット関数
-                    def fmt_all_rate(h: int) -> str:
-                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
-                        total = info.get('total')
-                        rate = info.get('rate')
-                        win = info.get('win')
-                        if total and rate is not None:
-                            return f"{win}/{total} ({rate:.1f}%)"
-                        return "N/A"
+                        history['performance_summary'] = performance_summary
+                        
+                        # UIを更新
+                        if history['id'] in history_item_map:
+                            item_id = history_item_map[history['id']]
+                            
+                            # 勝率の整形
+                            def fmt_rate(h: int) -> str:
+                                info = performance_summary.get('win_rates', {}).get(h, {})
+                                total = info.get('total')
+                                rate = info.get('rate')
+                                win = info.get('win')
+                                if total and rate is not None:
+                                    return f"{win}/{total} ({rate:.1f}%)"
+                                return "N/A"
 
-                    def fmt_all_avg(h: int) -> str:
-                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
-                        avg = info.get('avg')
-                        if avg is None:
-                            return "N/A"
-                        return f"{avg:+.2f}%"
+                            def fmt_avg(h: int) -> str:
+                                info = performance_summary.get('win_rates', {}).get(h, {})
+                                avg = info.get('avg')
+                                if avg is None:
+                                    return "N/A"
+                                return f"{avg:+.2f}%"
 
-                    def fmt_all_med(h: int) -> str:
-                        info = all_symbols_perf.get('win_rates', {}).get(h, {})
-                        med = info.get('median')
-                        if med is None:
+                            def fmt_med(h: int) -> str:
+                                info = performance_summary.get('win_rates', {}).get(h, {})
+                                med = info.get('median')
+                                if med is None:
+                                    return "N/A"
+                                return f"{med:+.2f}%"
+                            
+                            # 既存の値を取得
+                            current_values = list(tree.item(item_id)['values'])
+                            
+                            # パフォーマンス値を更新
+                            current_values[3:6] = [fmt_rate(1), fmt_avg(1), fmt_med(1)]
+                            current_values[6:9] = [fmt_rate(2), fmt_avg(2), fmt_med(2)]
+                            current_values[9:12] = [fmt_rate(3), fmt_avg(3), fmt_med(3)]
+                            
+                            self.parent.after(0, lambda v=current_values, i=item_id: tree.item(i, values=v))
+                    except Exception as e:
+                        print(f"[WARN] パフォーマンス計算エラー (history_id={history['id']}): {e}")
+                
+                # 全銘柄パフォーマンスを計算（日付ごと）
+                # 日付を再計算（クロージャの問題を回避）
+                from collections import defaultdict
+                history_by_date_calc = defaultdict(list)
+                for history in history_list:
+                    try:
+                        dt = datetime.fromisoformat(history['executed_at'])
+                        history_date = dt.date()
+                        history_by_date_calc[history_date].append(history)
+                    except:
+                        continue
+                sorted_dates_calc = sorted(history_by_date_calc.keys(), reverse=True)
+                
+                all_symbols_perf_cache = {}
+                for history_date in sorted_dates_calc:
+                    try:
+                        if history_date not in all_symbols_perf_cache:
+                            all_symbols_perf = history_manager._calculate_all_symbols_performance(
+                                history_date,
+                                horizons=(1, 2, 3)
+                            )
+                            all_symbols_perf_cache[history_date] = all_symbols_perf
+                        else:
+                            all_symbols_perf = all_symbols_perf_cache[history_date]
+                        
+                        # 全銘柄行を更新
+                        def fmt_all_rate(h: int) -> str:
+                            info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                            total = info.get('total')
+                            rate = info.get('rate')
+                            win = info.get('win')
+                            if total and rate is not None:
+                                return f"{win}/{total} ({rate:.1f}%)"
                             return "N/A"
-                        return f"{med:+.2f}%"
-                    
-                    date_str = history_date.strftime('%Y/%m/%d')
-                    tree.insert(
-                        "",
-                        "end",
-                        values=(
-                            f"全銘柄({date_str})",
-                            "全銘柄",
-                            "-",
-                            fmt_all_rate(1), fmt_all_avg(1), fmt_all_med(1),
-                            fmt_all_rate(2), fmt_all_avg(2), fmt_all_med(2),
-                            fmt_all_rate(3), fmt_all_avg(3), fmt_all_med(3)
-                        ),
-                        tags=("all_symbols",)  # 特別なタグで背景色を変更
-                    )
-                except Exception as e:
-                    # 全銘柄パフォーマンス計算でエラーが発生しても処理を継続
-                    print(f"[WARN] 全銘柄パフォーマンス計算エラー ({history_date}): {e}")
-                    import traceback
-                    traceback.print_exc()
+
+                        def fmt_all_avg(h: int) -> str:
+                            info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                            avg = info.get('avg')
+                            if avg is None:
+                                return "N/A"
+                            return f"{avg:+.2f}%"
+
+                        def fmt_all_med(h: int) -> str:
+                            info = all_symbols_perf.get('win_rates', {}).get(h, {})
+                            med = info.get('median')
+                            if med is None:
+                                return "N/A"
+                            return f"{med:+.2f}%"
+                        
+                        # 全銘柄行を検索して更新
+                        date_tag = history_date.isoformat()
+                        for item in tree.get_children():
+                            tags = tree.item(item)['tags']
+                            if len(tags) >= 2 and tags[0] == "all_symbols" and tags[1] == date_tag:
+                                current_values = list(tree.item(item)['values'])
+                                current_values[3:6] = [fmt_all_rate(1), fmt_all_avg(1), fmt_all_med(1)]
+                                current_values[6:9] = [fmt_all_rate(2), fmt_all_avg(2), fmt_all_med(2)]
+                                current_values[9:12] = [fmt_all_rate(3), fmt_all_avg(3), fmt_all_med(3)]
+                                self.parent.after(0, lambda v=current_values, i=item: tree.item(i, values=v))
+                                break
+                    except Exception as e:
+                        print(f"[WARN] 全銘柄パフォーマンス計算エラー ({history_date}): {e}")
+            
+            perf_thread = threading.Thread(target=calculate_performance_in_thread, daemon=True)
+            perf_thread.start()
             
             def on_double_click(event):
                 item = tree.selection()[0] if tree.selection() else None

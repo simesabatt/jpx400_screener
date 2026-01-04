@@ -226,9 +226,57 @@ class ScreeningHistory:
             traceback.print_exc()
             return None
     
+    def get_history_list_basic(self, limit: int = 100) -> List[Dict]:
+        """
+        スクリーニング履歴一覧を取得（基本情報のみ、パフォーマンス計算なし）
+        
+        Args:
+            limit: 取得件数の上限
+            
+        Returns:
+            List[Dict]: 履歴一覧（performance_summaryは空）
+        """
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.row_factory = sqlite3.Row
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT 
+                        id,
+                        executed_at,
+                        conditions_json,
+                        symbol_count,
+                        created_at
+                    FROM screening_history
+                    ORDER BY executed_at DESC
+                    LIMIT ?
+                """, (limit,))
+                
+                rows = cursor.fetchall()
+                history_list = []
+                
+                for row in rows:
+                    history_list.append({
+                        'id': row['id'],
+                        'executed_at': row['executed_at'],
+                        'conditions': json.loads(row['conditions_json']),
+                        'symbol_count': row['symbol_count'],
+                        'created_at': row['created_at'],
+                        'performance_summary': {}  # パフォーマンス計算は後で行う
+                    })
+                
+                return history_list
+                
+        except Exception as e:
+            print(f"[ERROR] 履歴取得エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
     def get_history_list(self, limit: int = 100) -> List[Dict]:
         """
-        スクリーニング履歴一覧を取得
+        スクリーニング履歴一覧を取得（パフォーマンス計算込み）
         
         Args:
             limit: 取得件数の上限

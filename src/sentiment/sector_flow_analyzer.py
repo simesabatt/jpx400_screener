@@ -17,6 +17,7 @@ import sqlite3
 from src.data_collector.ohlcv_data_manager import OHLCVDataManager
 from src.screening.jpx400_manager import JPX400Manager
 from src.data_collector.financial_metrics_manager import FinancialMetricsManager
+from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
 
 
 class SectorFlowAnalyzer:
@@ -33,6 +34,7 @@ class SectorFlowAnalyzer:
         self.ohlcv_manager = OHLCVDataManager(db_path)
         self.jpx400_manager = JPX400Manager()
         self.financial_metrics_manager = FinancialMetricsManager(db_path)
+        self.net_cash_ratio_manager = NetCashRatioManager(db_path)
     
     def get_oldest_date(self) -> Optional[datetime]:
         """
@@ -421,7 +423,7 @@ class SectorFlowAnalyzer:
         
         Returns:
             pd.DataFrame: セクター名と平均財務指標のデータ
-                列: 'sector'（セクター名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roe'
+                列: 'sector'（セクター名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roa', 'avg_roe', 'avg_net_cash_ratio'
         """
         # JPX400銘柄リストを取得
         symbols = self.jpx400_manager.load_symbols()
@@ -434,6 +436,9 @@ class SectorFlowAnalyzer:
         
         # 財務指標を一括取得
         financial_metrics_dict = self.financial_metrics_manager.get_financial_metrics_batch(symbols)
+        
+        # NC比率を一括取得
+        net_cash_ratio_dict = self.net_cash_ratio_manager.get_net_cash_ratio_batch(symbols)
         
         # セクターごとに財務指標を集計
         sector_metrics: Dict[str, Dict[str, List[float]]] = {}
@@ -453,7 +458,8 @@ class SectorFlowAnalyzer:
                     'pbr': [],
                     'dividend_yield': [],
                     'roa': [],
-                    'roe': []
+                    'roe': [],
+                    'net_cash_ratio': []
                 }
             
             # NULL値でない指標のみ追加
@@ -467,6 +473,10 @@ class SectorFlowAnalyzer:
                 sector_metrics[sector]['roa'].append(metrics['roa'])
             if metrics.get('roe') is not None:
                 sector_metrics[sector]['roe'].append(metrics['roe'])
+            # NC比率を追加
+            net_cash_ratio = net_cash_ratio_dict.get(symbol)
+            if net_cash_ratio is not None:
+                sector_metrics[sector]['net_cash_ratio'].append(net_cash_ratio)
         
         if not sector_metrics:
             print("[SectorFlowAnalyzer] 財務指標データが見つかりませんでした")
@@ -481,7 +491,8 @@ class SectorFlowAnalyzer:
                 'avg_pbr': np.mean(metrics_list['pbr']) if metrics_list['pbr'] else None,
                 'avg_dividend_yield': np.mean(metrics_list['dividend_yield']) if metrics_list['dividend_yield'] else None,
                 'avg_roa': np.mean(metrics_list['roa']) if metrics_list['roa'] else None,
-                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None
+                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None,
+                'avg_net_cash_ratio': np.mean(metrics_list['net_cash_ratio']) if metrics_list['net_cash_ratio'] else None
             })
         
         result_df = pd.DataFrame(result_data)
@@ -496,7 +507,7 @@ class SectorFlowAnalyzer:
         
         Returns:
             pd.DataFrame: セクター名、業種名、平均財務指標のデータ
-                列: 'sector'（セクター名）, 'industry'（業種名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roe'
+                列: 'sector'（セクター名）, 'industry'（業種名）, 'avg_per', 'avg_pbr', 'avg_dividend_yield', 'avg_roa', 'avg_roe', 'avg_net_cash_ratio'
         """
         # JPX400銘柄リストを取得
         symbols = self.jpx400_manager.load_symbols()
@@ -510,6 +521,9 @@ class SectorFlowAnalyzer:
         
         # 財務指標を一括取得
         financial_metrics_dict = self.financial_metrics_manager.get_financial_metrics_batch(symbols)
+        
+        # NC比率を一括取得
+        net_cash_ratio_dict = self.net_cash_ratio_manager.get_net_cash_ratio_batch(symbols)
         
         # セクター・業種ごとに財務指標を集計
         sector_industry_metrics: Dict[Tuple[str, str], Dict[str, List[float]]] = {}
@@ -532,7 +546,8 @@ class SectorFlowAnalyzer:
                     'pbr': [],
                     'dividend_yield': [],
                     'roa': [],
-                    'roe': []
+                    'roe': [],
+                    'net_cash_ratio': []
                 }
             
             # NULL値でない指標のみ追加
@@ -546,6 +561,10 @@ class SectorFlowAnalyzer:
                 sector_industry_metrics[key]['roa'].append(metrics['roa'])
             if metrics.get('roe') is not None:
                 sector_industry_metrics[key]['roe'].append(metrics['roe'])
+            # NC比率を追加
+            net_cash_ratio = net_cash_ratio_dict.get(symbol)
+            if net_cash_ratio is not None:
+                sector_industry_metrics[key]['net_cash_ratio'].append(net_cash_ratio)
         
         if not sector_industry_metrics:
             print("[SectorFlowAnalyzer] 財務指標データが見つかりませんでした")
@@ -561,7 +580,8 @@ class SectorFlowAnalyzer:
                 'avg_pbr': np.mean(metrics_list['pbr']) if metrics_list['pbr'] else None,
                 'avg_dividend_yield': np.mean(metrics_list['dividend_yield']) if metrics_list['dividend_yield'] else None,
                 'avg_roa': np.mean(metrics_list['roa']) if metrics_list['roa'] else None,
-                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None
+                'avg_roe': np.mean(metrics_list['roe']) if metrics_list['roe'] else None,
+                'avg_net_cash_ratio': np.mean(metrics_list['net_cash_ratio']) if metrics_list['net_cash_ratio'] else None
             })
         
         result_df = pd.DataFrame(result_data)
