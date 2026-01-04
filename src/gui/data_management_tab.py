@@ -1010,7 +1010,7 @@ class DataManagementTab:
                 from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
                 
                 # JPX400銘柄リストを取得
-                jpx400_manager = JPX400Manager(self.db_path)
+                jpx400_manager = JPX400Manager()  # デフォルトのパス（data/jpx400_symbols.json）を使用
                 symbols = jpx400_manager.load_symbols()
                 
                 if not symbols:
