@@ -60,6 +60,7 @@ class DataManagementTab:
         self._stop_collecting = False
         self._fetching_names = False
         self._fetching_net_cash_ratio = False
+        self._updating_net_cash_ratio_data = False
         
         # UI構築
         self._build_ui()
@@ -138,6 +139,15 @@ class DataManagementTab:
             width=20
         )
         self.fetch_net_cash_ratio_button.pack(side="left", padx=pad)
+        
+        # NC比率データ更新ボタン（キャッシュを強制更新）
+        self.update_net_cash_ratio_data_button = ttk.Button(
+            bottom_button_frame,
+            text="NC比率データ更新",
+            command=self.on_update_net_cash_ratio_data,
+            width=20
+        )
+        self.update_net_cash_ratio_data_button.pack(side="left", padx=pad)
         
         # ネットキャッシュ比率取得ステータス表示
         self.net_cash_ratio_status_var = tk.StringVar(value="")
@@ -1031,7 +1041,9 @@ class DataManagementTab:
                 net_cash_ratio_manager = NetCashRatioManager(self.db_path)
                 results = net_cash_ratio_manager.fetch_and_save_batch(
                     symbols,
-                    progress_callback=progress_callback
+                    progress_callback=progress_callback,
+                    use_cache=True,  # キャッシュを使用（データがあればそれを使用）
+                    force_update=False  # 強制更新しない（キャッシュがあれば使用）
                 )
                 
                 # 最新取得日時を更新
@@ -1064,6 +1076,96 @@ class DataManagementTab:
                 self.status_var.set("状態: 待機中")
         
         thread = threading.Thread(target=fetch_in_thread, daemon=True)
+        thread.start()
+    
+    def on_update_net_cash_ratio_data(self):
+        """NC比率計算に必要なデータ（貸借対照表、時価総額）を強制更新"""
+        if self._updating_net_cash_ratio_data:
+            messagebox.showwarning("警告", "NC比率データ更新は既に実行中です。")
+            return
+        
+        result = messagebox.askyesno(
+            "確認",
+            "JPX400全銘柄のNC比率計算データ（貸借対照表、時価総額）を強制更新しますか？\n\n"
+            "この処理には時間がかかる場合があります。\n"
+            "Yahoo Financeから最新データを取得してキャッシュを更新します。"
+        )
+        
+        if not result:
+            return
+        
+        def update_in_thread():
+            try:
+                self._updating_net_cash_ratio_data = True
+                self.jpx400_collect_button.config(state="disabled")
+                self.jpx400_update_list_button.config(state="disabled")
+                self.show_symbols_button.config(state="disabled")
+                self.fetch_names_button.config(state="disabled")
+                self.fetch_net_cash_ratio_button.config(state="disabled")
+                self.update_net_cash_ratio_data_button.config(state="disabled")
+                self.show_history_button.config(state="disabled")
+                
+                from src.screening.jpx400_manager import JPX400Manager
+                from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
+                
+                # JPX400銘柄リストを取得
+                jpx400_manager = JPX400Manager()
+                symbols = jpx400_manager.load_symbols()
+                
+                if not symbols:
+                    self.parent.after(0, lambda: messagebox.showinfo("情報", "JPX400銘柄リストが取得できませんでした。"))
+                    return
+                
+                self.status_var.set(f"状態: NC比率データ更新中... (0/{len(symbols)})")
+                self.net_cash_ratio_status_var.set("")
+                
+                def progress_callback(symbol, success, current, total):
+                    if success:
+                        status = f"状態: NC比率データ更新中... ({current}/{total}) - {symbol}"
+                    else:
+                        status = f"状態: NC比率データ更新中... ({current}/{total}) - {symbol}: エラー"
+                    self.status_var.set(status)
+                    self.parent.update()
+                
+                net_cash_ratio_manager = NetCashRatioManager(self.db_path)
+                # force_update=Trueで強制更新
+                results = net_cash_ratio_manager.fetch_and_save_batch(
+                    symbols,
+                    progress_callback=progress_callback,
+                    force_update=True  # キャッシュを無視して強制更新
+                )
+                
+                # 最新更新日時を更新
+                from datetime import datetime
+                now = datetime.now()
+                self.net_cash_ratio_status_var.set(f"最終更新: {now.strftime('%Y-%m-%d %H:%M')}")
+                
+                msg = (
+                    f"NC比率データ更新が完了しました。\n\n"
+                    f"成功: {results['success_count']}件\n"
+                    f"エラー: {results['error_count']}件"
+                )
+                self.parent.after(0, lambda: messagebox.showinfo("完了", msg))
+            
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"[ERROR] NC比率データ更新エラー: {e}")
+                print(f"[ERROR] 詳細: {error_detail}")
+                self.parent.after(0, lambda: messagebox.showerror("エラー", f"NC比率データ更新処理でエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。"))
+            
+            finally:
+                self._updating_net_cash_ratio_data = False
+                self.jpx400_collect_button.config(state="normal")
+                self.jpx400_update_list_button.config(state="normal")
+                self.show_symbols_button.config(state="normal")
+                self.fetch_names_button.config(state="normal")
+                self.fetch_net_cash_ratio_button.config(state="normal")
+                self.update_net_cash_ratio_data_button.config(state="normal")
+                self.show_history_button.config(state="normal")
+                self.status_var.set("状態: 待機中")
+        
+        thread = threading.Thread(target=update_in_thread, daemon=True)
         thread.start()
     
     def on_show_screening_history(self):

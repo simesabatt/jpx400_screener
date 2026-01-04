@@ -13,11 +13,12 @@ See LICENSE file for details.
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Callable
 import os
 import time
 import random
+import json
 import yfinance as yf
 import pandas as pd
 
@@ -36,7 +37,7 @@ class NetCashRatioManager:
         self._ensure_columns()
     
     def _ensure_columns(self):
-        """symbolsテーブルにネットキャッシュ比率列が存在することを確認（なければ追加）"""
+        """テーブルと列が存在することを確認（なければ作成・追加）"""
         db_dir = os.path.dirname(self.db_path)
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
@@ -44,7 +45,31 @@ class NetCashRatioManager:
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # ネットキャッシュ比率列を追加（既存テーブル用）
+            # 貸借対照表キャッシュテーブルを作成
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS balance_sheet_cache (
+                    symbol TEXT NOT NULL,
+                    year TEXT NOT NULL,
+                    data_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (symbol, year)
+                )
+            ''')
+            
+            # 時価総額キャッシュテーブルを作成
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS market_cap_cache (
+                    symbol TEXT PRIMARY KEY,
+                    market_cap REAL NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+            
+            # インデックスを作成
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_balance_sheet_symbol ON balance_sheet_cache(symbol)')
+            cursor.execute('CREATE INDEX IF NOT EXISTS idx_market_cap_symbol ON market_cap_cache(symbol)')
+            
+            # symbolsテーブルにネットキャッシュ比率列を追加（既存テーブル用）
             columns_to_add = [
                 ('net_cash_ratio', 'REAL'),
                 ('net_cash_ratio_updated_at', 'TEXT')
@@ -98,23 +123,203 @@ class NetCashRatioManager:
         
         return None
     
+    def _get_balance_sheet_from_cache(self, symbol: str, year: str) -> Optional[pd.DataFrame]:
+        """
+        キャッシュから貸借対照表データを取得
+        
+        Args:
+            symbol: 銘柄コード
+            year: 年度（文字列）
+        
+        Returns:
+            pd.DataFrame: 貸借対照表データ、またはNone
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT data_json FROM balance_sheet_cache
+                WHERE symbol = ? AND year = ?
+            ''', (symbol, year))
+            
+            row = cursor.fetchone()
+            if row:
+                try:
+                    data_dict = json.loads(row[0])
+                    # JSONからDataFrameに復元
+                    # data_dict['data']は辞書形式 {項目名: 値}
+                    series_data = pd.Series(data_dict['data'])
+                    df = pd.DataFrame({data_dict['columns'][0]: series_data})
+                    df.index = data_dict['index']
+                    # 列名を日付型に変換
+                    try:
+                        df.columns = pd.to_datetime(df.columns)
+                    except:
+                        # 日付変換に失敗した場合は文字列のまま
+                        pass
+                    return df
+                except Exception as e:
+                    print(f"[NetCashRatioManager] キャッシュデータの復元エラー {symbol}: {e}")
+                    return None
+            return None
+    
+    def _save_balance_sheet_to_cache(self, symbol: str, balance_sheet: pd.DataFrame) -> bool:
+        """
+        貸借対照表データをキャッシュに保存
+        
+        Args:
+            symbol: 銘柄コード
+            balance_sheet: 貸借対照表データ
+        
+        Returns:
+            bool: 保存成功したかどうか
+        """
+        if balance_sheet is None or balance_sheet.empty:
+            return False
+        
+        try:
+            now = datetime.now().isoformat()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 各年度のデータを保存
+                for year in balance_sheet.columns:
+                    year_str = str(year)
+                    # DataFrameをJSONに変換
+                    data_dict = {
+                        'data': balance_sheet[year].to_dict(),
+                        'index': balance_sheet.index.tolist(),
+                        'columns': [year_str]
+                    }
+                    data_json = json.dumps(data_dict, default=str)
+                    
+                    cursor.execute('''
+                        INSERT OR REPLACE INTO balance_sheet_cache
+                        (symbol, year, data_json, updated_at)
+                        VALUES (?, ?, ?, ?)
+                    ''', (symbol, year_str, data_json, now))
+                
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"[NetCashRatioManager] キャッシュ保存エラー {symbol}: {e}")
+            return False
+    
+    def _get_market_cap_from_cache(self, symbol: str) -> Optional[float]:
+        """
+        キャッシュから時価総額を取得
+        
+        Args:
+            symbol: 銘柄コード
+        
+        Returns:
+            float: 時価総額、またはNone
+        """
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT market_cap FROM market_cap_cache
+                WHERE symbol = ?
+            ''', (symbol,))
+            
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return float(row[0])
+            return None
+    
+    def _save_market_cap_to_cache(self, symbol: str, market_cap: float) -> bool:
+        """
+        時価総額をキャッシュに保存
+        
+        Args:
+            symbol: 銘柄コード
+            market_cap: 時価総額
+        
+        Returns:
+            bool: 保存成功したかどうか
+        """
+        try:
+            now = datetime.now().isoformat()
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT OR REPLACE INTO market_cap_cache
+                    (symbol, market_cap, updated_at)
+                    VALUES (?, ?, ?)
+                ''', (symbol, market_cap, now))
+                conn.commit()
+                return True
+        except Exception as e:
+            print(f"[NetCashRatioManager] 時価総額キャッシュ保存エラー {symbol}: {e}")
+            return False
+    
     def fetch_balance_sheet_data(
         self,
         symbol: str,
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        use_cache: bool = True,
+        force_update: bool = False
     ) -> Optional[pd.DataFrame]:
         """
-        貸借対照表データを取得
+        貸借対照表データを取得（キャッシュ優先）
         
         Args:
             symbol: 銘柄コード（例: "7203"）
             max_retries: 最大リトライ回数
             retry_delay: リトライ時の基本待機時間（秒）
+            use_cache: キャッシュを使用するか（Trueの場合、キャッシュがあればそれを使用）
+            force_update: 強制更新（キャッシュを無視してYahoo Financeから取得）
         
         Returns:
             pd.DataFrame: 貸借対照表データ、またはNone
         """
+        # キャッシュから取得を試行（force_update=Falseの場合のみ）
+        if use_cache and not force_update:
+            # 最新年度を取得
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT year FROM balance_sheet_cache
+                    WHERE symbol = ?
+                    ORDER BY year DESC
+                    LIMIT 1
+                ''', (symbol,))
+                row = cursor.fetchone()
+                if row:
+                    cached_data = self._get_balance_sheet_from_cache(symbol, row[0])
+                    if cached_data is not None:
+                        # キャッシュから全年度のデータを再構築
+                        cursor.execute('''
+                            SELECT year, data_json FROM balance_sheet_cache
+                            WHERE symbol = ?
+                            ORDER BY year DESC
+                        ''', (symbol,))
+                        rows = cursor.fetchall()
+                        if rows:
+                            try:
+                                # 全年度のデータを結合
+                                all_data = {}
+                                all_index = None
+                                for year_str, data_json in rows:
+                                    data_dict = json.loads(data_json)
+                                    if all_index is None:
+                                        all_index = data_dict['index']
+                                    all_data[year_str] = data_dict['data']
+                                
+                                # DataFrameに変換
+                                df = pd.DataFrame(all_data)
+                                df.index = all_index
+                                # 列名を日付型に変換
+                                try:
+                                    df.columns = pd.to_datetime(df.columns)
+                                except:
+                                    # 日付変換に失敗した場合は文字列のまま
+                                    pass
+                                return df
+                            except Exception as e:
+                                print(f"[NetCashRatioManager] キャッシュデータの復元エラー {symbol}: {e}")
+        
+        # キャッシュにない、またはforce_update=Trueの場合はYahoo Financeから取得
         ticker_symbol = f"{symbol}.T"
         last_error = None
         
@@ -125,6 +330,9 @@ class NetCashRatioManager:
                 
                 if balance_sheet is None or balance_sheet.empty:
                     return None
+                
+                # 取得したデータをキャッシュに保存
+                self._save_balance_sheet_to_cache(symbol, balance_sheet)
                 
                 return balance_sheet
             
@@ -159,10 +367,12 @@ class NetCashRatioManager:
         self,
         symbol: str,
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        use_cache: bool = True,
+        force_update: bool = False
     ) -> Optional[float]:
         """
-        ネットキャッシュ比率を計算
+        ネットキャッシュ比率を計算（キャッシュ優先）
         
         計算式: (流動資産 + 投資有価証券 × 70% - 有利子負債) ÷ 時価総額
         
@@ -170,6 +380,8 @@ class NetCashRatioManager:
             symbol: 銘柄コード（例: "7203"）
             max_retries: 最大リトライ回数
             retry_delay: リトライ時の基本待機時間（秒）
+            use_cache: キャッシュを使用するか
+            force_update: 強制更新（キャッシュを無視）
         
         Returns:
             float: ネットキャッシュ比率、またはNone（データ不足時）
@@ -177,24 +389,34 @@ class NetCashRatioManager:
         ticker_symbol = f"{symbol}.T"
         
         try:
-            ticker = yf.Ticker(ticker_symbol)
-            
-            # 貸借対照表を取得
-            balance_sheet = self.fetch_balance_sheet_data(symbol, max_retries, retry_delay)
+            # 貸借対照表を取得（キャッシュ優先）
+            balance_sheet = self.fetch_balance_sheet_data(
+                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+            )
             if balance_sheet is None or balance_sheet.empty:
                 print(f"[ネットキャッシュ比率計算] {symbol}: 貸借対照表データが取得できませんでした")
                 return None
             
-            # 時価総額を取得
-            info = ticker.info
-            if not info or len(info) <= 1:
-                print(f"[ネットキャッシュ比率計算] {symbol}: 銘柄情報が取得できませんでした")
-                return None
+            # 時価総額を取得（キャッシュ優先）
+            market_cap = None
+            if use_cache and not force_update:
+                market_cap = self._get_market_cap_from_cache(symbol)
             
-            market_cap = info.get('marketCap')
-            if market_cap is None or market_cap <= 0:
-                print(f"[ネットキャッシュ比率計算] {symbol}: 時価総額（marketCap）が取得できませんでした")
-                return None
+            if market_cap is None:
+                # キャッシュにない、またはforce_update=Trueの場合はYahoo Financeから取得
+                ticker = yf.Ticker(ticker_symbol)
+                info = ticker.info
+                if not info or len(info) <= 1:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: 銘柄情報が取得できませんでした")
+                    return None
+                
+                market_cap = info.get('marketCap')
+                if market_cap is None or market_cap <= 0:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: 時価総額（marketCap）が取得できませんでした")
+                    return None
+                
+                # 取得した時価総額をキャッシュに保存
+                self._save_market_cap_to_cache(symbol, market_cap)
             
             # 最新年度を取得
             if len(balance_sheet.columns) == 0:
@@ -313,7 +535,9 @@ class NetCashRatioManager:
         self,
         symbol: str,
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        use_cache: bool = True,
+        force_update: bool = False
     ) -> Dict[str, any]:
         """
         ネットキャッシュ比率を取得してデータベースに保存（ワンステップ）
@@ -322,6 +546,8 @@ class NetCashRatioManager:
             symbol: 銘柄コード
             max_retries: 最大リトライ回数
             retry_delay: リトライ時の基本待機時間（秒）
+            use_cache: キャッシュを使用するか
+            force_update: 強制更新（キャッシュを無視）
         
         Returns:
             Dict: 結果
@@ -329,7 +555,9 @@ class NetCashRatioManager:
                 - net_cash_ratio: 取得したネットキャッシュ比率
                 - error: エラーメッセージ（失敗時）
         """
-        net_cash_ratio = self.calculate_net_cash_ratio(symbol, max_retries, retry_delay)
+        net_cash_ratio = self.calculate_net_cash_ratio(
+            symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+        )
         
         if net_cash_ratio is not None:
             success = self.save_net_cash_ratio(symbol, net_cash_ratio)
@@ -354,7 +582,9 @@ class NetCashRatioManager:
         symbols: List[str],
         progress_callback: Optional[Callable] = None,
         max_retries: int = 3,
-        retry_delay: float = 1.0
+        retry_delay: float = 1.0,
+        use_cache: bool = True,
+        force_update: bool = False
     ) -> Dict[str, Dict]:
         """
         複数銘柄のネットキャッシュ比率を一括取得して保存
@@ -385,7 +615,9 @@ class NetCashRatioManager:
             if i % 10 == 0 or i == 1 or i == total:
                 print(f"[ネットキャッシュ比率取得] 進捗: {i}/{total} ({symbol})")
             
-            result = self.fetch_and_save_net_cash_ratio(symbol, max_retries, retry_delay)
+            result = self.fetch_and_save_net_cash_ratio(
+                symbol, max_retries, retry_delay, use_cache=use_cache, force_update=force_update
+            )
             
             if result['success']:
                 results['success_count'] += 1
