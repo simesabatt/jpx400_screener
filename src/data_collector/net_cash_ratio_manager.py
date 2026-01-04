@@ -182,19 +182,23 @@ class NetCashRatioManager:
             # 貸借対照表を取得
             balance_sheet = self.fetch_balance_sheet_data(symbol, max_retries, retry_delay)
             if balance_sheet is None or balance_sheet.empty:
+                print(f"[ネットキャッシュ比率計算] {symbol}: 貸借対照表データが取得できませんでした")
                 return None
             
             # 時価総額を取得
             info = ticker.info
             if not info or len(info) <= 1:
+                print(f"[ネットキャッシュ比率計算] {symbol}: 銘柄情報が取得できませんでした")
                 return None
             
             market_cap = info.get('marketCap')
             if market_cap is None or market_cap <= 0:
+                print(f"[ネットキャッシュ比率計算] {symbol}: 時価総額（marketCap）が取得できませんでした")
                 return None
             
             # 最新年度を取得
             if len(balance_sheet.columns) == 0:
+                print(f"[ネットキャッシュ比率計算] {symbol}: 貸借対照表に年度データがありません")
                 return None
             latest_year = balance_sheet.columns[0]
             
@@ -207,6 +211,7 @@ class NetCashRatioManager:
                 balance_sheet, current_assets_candidates, latest_year
             )
             if current_assets is None:
+                print(f"[ネットキャッシュ比率計算] {symbol}: 流動資産（Current Assets）が取得できませんでした")
                 return None
             
             # 投資有価証券を取得（複数の候補を合計）
@@ -251,6 +256,7 @@ class NetCashRatioManager:
                 ) or 0.0
                 total_debt = long_term_debt + current_debt
                 if total_debt == 0:
+                    print(f"[ネットキャッシュ比率計算] {symbol}: 有利子負債（Total Debt/Long Term Debt/Current Debt）が取得できませんでした")
                     return None
             
             # ネットキャッシュ比率を計算
