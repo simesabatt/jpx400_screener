@@ -329,13 +329,13 @@ class ScreeningUI:
                 "SC時価格", "SC時出来高",
                 "翌1日", "翌2日", "翌3日",
                 "現在価格", "最新出来高",
-                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "ネットキャッシュ比率",
+                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         else:
             columns = (
                 "銘柄コード", "銘柄名", "セクター", "業種",
-                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "ネットキャッシュ比率", "状態",
+                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "状態",
                 "GC 5/25", "GC 25/75", "GC 5/200",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
@@ -445,7 +445,7 @@ class ScreeningUI:
         tree.heading("利回り", text="利回り")
         tree.heading("ROA", text="ROA")
         tree.heading("ROE", text="ROE")
-        tree.heading("ネットキャッシュ比率", text="ネットキャッシュ比率")
+        tree.heading("NC比率", text="NC比率")
         
         if is_history:
             tree.heading("SC時価格", text="SC時価格")
@@ -483,7 +483,7 @@ class ScreeningUI:
         tree.column("利回り", width=60, anchor="e")
         tree.column("ROA", width=50, anchor="e")
         tree.column("ROE", width=50, anchor="e")
-        tree.column("ネットキャッシュ比率", width=120, anchor="e")
+        tree.column("NC比率", width=100, anchor="e")
         
         if is_history:
             tree.column("SC時価格", width=70, anchor="e")

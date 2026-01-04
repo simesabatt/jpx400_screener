@@ -117,12 +117,12 @@ class DataManagementTab:
         )
         self.fetch_names_button.pack(side="left", padx=pad)
         
-        # ネットキャッシュ比率取得ボタン
+        # NC比率取得ボタン
         self.fetch_net_cash_ratio_button = ttk.Button(
             button_frame,
-            text="ネットキャッシュ比率取得",
+            text="NC比率取得",
             command=self.on_fetch_net_cash_ratio,
-            width=25
+            width=20
         )
         self.fetch_net_cash_ratio_button.pack(side="left", padx=pad)
         
