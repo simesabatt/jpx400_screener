@@ -51,7 +51,9 @@ class JPX400Manager:
         
         for encoding in encodings:
             try:
-                with open(self.list_file, 'r', encoding=encoding) as f:
+                # Pathオブジェクトを文字列に変換
+                file_path = str(self.list_file)
+                with open(file_path, 'r', encoding=encoding) as f:
                     data = json.load(f)
                     symbols = data.get('symbols', [])
                     print(f"[JPX400Manager] {len(symbols)}銘柄を読み込みました (エンコーディング: {encoding})")
@@ -137,7 +139,8 @@ class JPX400Manager:
             return []
         
         try:
-            with open(csv_path, 'r', encoding='utf-8') as f:
+            file_path = str(csv_path)
+            with open(file_path, 'r', encoding='utf-8') as f:
                 reader = csv.reader(f)
                 next(reader)  # ヘッダー行をスキップ
                 
