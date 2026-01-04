@@ -117,19 +117,6 @@ class DataManagementTab:
         )
         self.fetch_names_button.pack(side="left", padx=pad)
         
-        # NC比率取得ボタン
-        self.fetch_net_cash_ratio_button = ttk.Button(
-            button_frame,
-            text="NC比率取得",
-            command=self.on_fetch_net_cash_ratio,
-            width=20
-        )
-        self.fetch_net_cash_ratio_button.pack(side="left", padx=pad)
-        
-        # ネットキャッシュ比率取得ステータス表示
-        self.net_cash_ratio_status_var = tk.StringVar(value="")
-        ttk.Label(button_frame, textvariable=self.net_cash_ratio_status_var, foreground="gray").pack(side="left", padx=pad)
-
         # 2段目ボタンフレーム（DB銘柄一覧）
         bottom_button_frame = ttk.Frame(self.parent)
         bottom_button_frame.pack(fill="x", pady=(0, pad), padx=pad, anchor="w")
@@ -142,6 +129,19 @@ class DataManagementTab:
             width=20
         )
         self.show_symbols_button.pack(side="left", padx=pad)
+        
+        # NC比率取得ボタン（2段目に移動）
+        self.fetch_net_cash_ratio_button = ttk.Button(
+            bottom_button_frame,
+            text="NC比率取得",
+            command=self.on_fetch_net_cash_ratio,
+            width=20
+        )
+        self.fetch_net_cash_ratio_button.pack(side="left", padx=pad)
+        
+        # ネットキャッシュ比率取得ステータス表示
+        self.net_cash_ratio_status_var = tk.StringVar(value="")
+        ttk.Label(bottom_button_frame, textvariable=self.net_cash_ratio_status_var, foreground="gray").pack(side="left", padx=pad)
 
         # スクリーニング履歴ボタン
         self.show_history_button = ttk.Button(
@@ -1060,6 +1060,7 @@ class DataManagementTab:
                 self.show_symbols_button.config(state="normal")
                 self.fetch_names_button.config(state="normal")
                 self.fetch_net_cash_ratio_button.config(state="normal")
+                self.show_history_button.config(state="normal")
                 self.status_var.set("状態: 待機中")
         
         thread = threading.Thread(target=fetch_in_thread, daemon=True)
