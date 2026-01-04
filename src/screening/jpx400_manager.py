@@ -47,6 +47,7 @@ class JPX400Manager:
         
         # 複数のエンコーディングを試行
         encodings = ['utf-8', 'utf-8-sig', 'shift_jis', 'cp932', 'euc-jp']
+        last_error = None
         
         for encoding in encodings:
             try:
@@ -55,20 +56,42 @@ class JPX400Manager:
                     symbols = data.get('symbols', [])
                     print(f"[JPX400Manager] {len(symbols)}銘柄を読み込みました (エンコーディング: {encoding})")
                     return symbols
-            except UnicodeDecodeError:
+            except UnicodeDecodeError as e:
                 # エンコーディングが合わない場合は次を試行
+                last_error = f"エンコーディング {encoding} でデコードエラー: {e}"
                 continue
             except json.JSONDecodeError as e:
-                # JSONのパースエラーは別のエンコーディングを試行
-                continue
+                # JSONのパースエラー - エンコーディングは正しいがJSONが不正
+                last_error = f"エンコーディング {encoding} でJSONパースエラー: {e}"
+                # JSONエラーの場合は、エンコーディングは正しい可能性が高いので、エラー詳細を表示
+                print(f"[JPX400Manager] {last_error}")
+                print(f"  ファイルの内容を確認してください: {self.list_file}")
+                # JSONエラーの場合は、他のエンコーディングを試しても意味がないので、ここで終了
+                return []
             except Exception as e:
-                # その他のエラーは最後のエンコーディングまで試行
+                # その他のエラー
+                last_error = f"エンコーディング {encoding} でエラー: {e}"
                 if encoding == encodings[-1]:
                     print(f"[JPX400Manager] 銘柄リストの読み込みエラー: {e}")
                     return []
                 continue
         
+        # すべてのエンコーディングで失敗した場合
         print(f"[JPX400Manager] すべてのエンコーディングで読み込みに失敗しました")
+        if last_error:
+            print(f"  最後のエラー: {last_error}")
+        print(f"  ファイルパス: {self.list_file}")
+        print(f"  ファイルが存在するか: {self.list_file.exists()}")
+        if self.list_file.exists():
+            print(f"  ファイルサイズ: {self.list_file.stat().st_size} bytes")
+            # ファイルの最初の数バイトを表示（デバッグ用）
+            try:
+                with open(self.list_file, 'rb') as f:
+                    first_bytes = f.read(100)
+                    print(f"  ファイルの最初の100バイト（16進数）: {first_bytes.hex()}")
+            except Exception as e:
+                print(f"  ファイルの読み取りエラー: {e}")
+        
         return []
     
     def save_symbols(self, symbols: List[str], metadata: Optional[dict] = None):
