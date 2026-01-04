@@ -115,7 +115,8 @@ class JPX400Manager:
             data['metadata']['updated_at'] = datetime.now().isoformat()
         
         try:
-            with open(self.list_file, 'w', encoding='utf-8') as f:
+            file_path = str(self.list_file)
+            with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
             print(f"[JPX400Manager] {len(symbols)}銘柄を保存しました: {self.list_file}")
         except Exception as e:
