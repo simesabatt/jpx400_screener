@@ -329,13 +329,13 @@ class ScreeningUI:
                 "SC時価格", "SC時出来高",
                 "翌1日", "翌2日", "翌3日",
                 "現在価格", "最新出来高",
-                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE",
+                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "ネットキャッシュ比率",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         else:
             columns = (
                 "銘柄コード", "銘柄名", "セクター", "業種",
-                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "状態",
+                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "ネットキャッシュ比率", "状態",
                 "GC 5/25", "GC 25/75", "GC 5/200",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
@@ -445,6 +445,7 @@ class ScreeningUI:
         tree.heading("利回り", text="利回り")
         tree.heading("ROA", text="ROA")
         tree.heading("ROE", text="ROE")
+        tree.heading("ネットキャッシュ比率", text="ネットキャッシュ比率")
         
         if is_history:
             tree.heading("SC時価格", text="SC時価格")
@@ -482,6 +483,7 @@ class ScreeningUI:
         tree.column("利回り", width=60, anchor="e")
         tree.column("ROA", width=50, anchor="e")
         tree.column("ROE", width=50, anchor="e")
+        tree.column("ネットキャッシュ比率", width=120, anchor="e")
         
         if is_history:
             tree.column("SC時価格", width=70, anchor="e")
@@ -520,6 +522,11 @@ class ScreeningUI:
         financial_metrics_manager = FinancialMetricsManager(self.db_path)
         financial_metrics_dict = financial_metrics_manager.get_financial_metrics_batch(symbol_list)
         
+        # ネットキャッシュ比率を取得
+        from src.data_collector.net_cash_ratio_manager import NetCashRatioManager
+        net_cash_ratio_manager = NetCashRatioManager(self.db_path)
+        net_cash_ratio_dict = net_cash_ratio_manager.get_net_cash_ratio_batch(symbol_list)
+        
         if is_history:
             # 履歴表示の場合は、resultに既に含まれている値を使用
             # 業種情報がない場合はデータベースから取得（フォールバック）
@@ -555,6 +562,10 @@ class ScreeningUI:
             dividend_yield = f"{metrics.get('dividend_yield', 0):.2f}%" if metrics.get('dividend_yield') is not None else "-"
             roa = f"{metrics.get('roa', 0):.2f}%" if metrics.get('roa') is not None else "-"
             roe = f"{metrics.get('roe', 0):.2f}%" if metrics.get('roe') is not None else "-"
+            
+            # ネットキャッシュ比率を取得
+            net_cash_ratio = net_cash_ratio_dict.get(symbol) if net_cash_ratio_dict else None
+            net_cash_ratio_str = f"{net_cash_ratio:.4f}" if net_cash_ratio is not None else "-"
             
             # 価格と出来高の取得
             if is_history:
@@ -685,6 +696,7 @@ class ScreeningUI:
                         dividend_yield,
                         roa,
                         roe,
+                        net_cash_ratio_str,  # ネットキャッシュ比率
                         ma5_str,
                         ma25_str,
                         ma75_str,
@@ -709,6 +721,7 @@ class ScreeningUI:
                         dividend_yield,
                         roa,
                         roe,
+                        net_cash_ratio_str,  # ネットキャッシュ比率
                         status,
                         gc5_25_str,
                         gc25_75_str,
