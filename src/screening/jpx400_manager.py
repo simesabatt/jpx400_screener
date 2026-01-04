@@ -45,15 +45,31 @@ class JPX400Manager:
             print("  デフォルトの銘柄リストを作成します")
             self._create_default_list()
         
-        try:
-            with open(self.list_file, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                symbols = data.get('symbols', [])
-                print(f"[JPX400Manager] {len(symbols)}銘柄を読み込みました")
-                return symbols
-        except Exception as e:
-            print(f"[JPX400Manager] 銘柄リストの読み込みエラー: {e}")
-            return []
+        # 複数のエンコーディングを試行
+        encodings = ['utf-8', 'utf-8-sig', 'shift_jis', 'cp932', 'euc-jp']
+        
+        for encoding in encodings:
+            try:
+                with open(self.list_file, 'r', encoding=encoding) as f:
+                    data = json.load(f)
+                    symbols = data.get('symbols', [])
+                    print(f"[JPX400Manager] {len(symbols)}銘柄を読み込みました (エンコーディング: {encoding})")
+                    return symbols
+            except UnicodeDecodeError:
+                # エンコーディングが合わない場合は次を試行
+                continue
+            except json.JSONDecodeError as e:
+                # JSONのパースエラーは別のエンコーディングを試行
+                continue
+            except Exception as e:
+                # その他のエラーは最後のエンコーディングまで試行
+                if encoding == encodings[-1]:
+                    print(f"[JPX400Manager] 銘柄リストの読み込みエラー: {e}")
+                    return []
+                continue
+        
+        print(f"[JPX400Manager] すべてのエンコーディングで読み込みに失敗しました")
+        return []
     
     def save_symbols(self, symbols: List[str], metadata: Optional[dict] = None):
         """
