@@ -1578,6 +1578,20 @@ class MarketConditionsTab:
         net_cash_ratio_dict: Optional[Dict[str, Optional[float]]] = None
     ):
         """セクター別銘柄一覧を別ウィンドウで表示"""
+        
+        # RSI計算関数
+        def calc_rsi(series, period: int = 14):
+            """RSIを計算"""
+            if len(series) < period + 1:
+                return None
+            delta = series.diff()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            avg_gain = gain.rolling(period).mean()
+            avg_loss = loss.rolling(period).mean()
+            rs = avg_gain / avg_loss.replace(0, pd.NA)
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else None
         window = tk.Toplevel(self.parent)
         window.title(f"{sector} - 銘柄一覧")
         window.geometry("1200x700")
@@ -1606,7 +1620,7 @@ class MarketConditionsTab:
         h_scrollbar = ttk.Scrollbar(tree_frame, orient="horizontal")
         h_scrollbar.pack(side="bottom", fill="x")
         
-        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
+        columns = ("銘柄コード", "銘柄名", "セクター", "業種", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "RSI", "データ件数", "最初の日付", "最後の日付", "現在株価", "最新出来高", "σ値")
         tree = ttk.Treeview(
             tree_frame,
             columns=columns,
@@ -1623,14 +1637,15 @@ class MarketConditionsTab:
         # 列の設定
         tree.column("銘柄コード", width=100, anchor="center")
         tree.column("銘柄名", width=200, anchor="w")
-        tree.column("セクター", width=150, anchor="w")
-        tree.column("業種", width=200, anchor="w")
-        tree.column("PER", width=80, anchor="e")
-        tree.column("PBR", width=80, anchor="e")
-        tree.column("利回り", width=90, anchor="e")
-        tree.column("ROA", width=80, anchor="e")
-        tree.column("ROE", width=80, anchor="e")
-        tree.column("NC比率", width=100, anchor="e")
+        tree.column("セクター", width=130, anchor="w")
+        tree.column("業種", width=180, anchor="w")
+        tree.column("PER", width=60, anchor="e")
+        tree.column("PBR", width=60, anchor="e")
+        tree.column("利回り", width=60, anchor="e")
+        tree.column("ROA", width=60, anchor="e")
+        tree.column("ROE", width=60, anchor="e")
+        tree.column("NC比率", width=80, anchor="e")
+        tree.column("RSI", width=60, anchor="e")
         tree.column("データ件数", width=100, anchor="e")
         tree.column("最初の日付", width=120, anchor="center")
         tree.column("最後の日付", width=120, anchor="center")
@@ -1650,7 +1665,7 @@ class MarketConditionsTab:
             
             items = [(tree.set(item, column), item) for item in tree.get_children('')]
             
-            if column in ["現在株価", "σ値", "データ件数", "最新出来高", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率"]:
+            if column in ["現在株価", "σ値", "データ件数", "最新出来高", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "RSI"]:
                 def sort_key(x):
                     try:
                         val = x[0].replace('σ', '').replace('+', '').replace(',', '').replace('N/A', '0').strip()
@@ -1738,6 +1753,27 @@ class MarketConditionsTab:
             net_cash_ratio = net_cash_ratio_dict.get(symbol) if net_cash_ratio_dict else None
             nc_ratio_str = f"{net_cash_ratio:.4f}" if net_cash_ratio is not None else "-"
             
+            # RSIを計算
+            rsi_value = None
+            rsi_str = "N/A"
+            try:
+                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+                ohlcv_manager = OHLCVDataManager(self.db_path)
+                df_rsi = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                    symbol=symbol,
+                    timeframe='1d',
+                    source='yahoo',
+                    include_temporary=True
+                )
+                if not df_rsi.empty and len(df_rsi) >= 15:  # 14日分のデータ + 1日
+                    close_series = df_rsi['close']
+                    rsi_value = calc_rsi(close_series, period=14)
+                    if rsi_value is not None:
+                        rsi_str = f"{rsi_value:.2f}"
+            except Exception as e:
+                # エラーが発生した場合はN/Aのまま
+                pass
+            
             tree.insert("", "end", values=(
                 symbol,
                 name,
@@ -1749,6 +1785,7 @@ class MarketConditionsTab:
                 roa,
                 roe,
                 nc_ratio_str,
+                rsi_str,  # RSI
                 f"{data_count:,}" if data_count > 0 else "0",
                 first_date,
                 last_date,

@@ -16,6 +16,7 @@ from typing import List, Dict, Optional
 from pathlib import Path
 import time
 import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from src.data_collector.ohlcv_data_manager import OHLCVDataManager
 from src.screening.jpx400_manager import JPX400Manager
@@ -431,15 +432,17 @@ class JPX400DataCollector:
         self,
         complement_today: bool = True,
         progress_callback: Optional[callable] = None,
-        stop_check: Optional[callable] = None
+        stop_check: Optional[callable] = None,
+        max_workers: int = 4
     ) -> Dict:
         """
-        JPX400銘柄のデータを一括収集
+        JPX400銘柄のデータを一括収集（並列処理対応）
         
         Args:
             complement_today: 当日データを補完するか
             progress_callback: 進捗コールバック関数（symbol, current, total, result）
             stop_check: 停止チェック関数（Trueを返すと停止）
+            max_workers: 並列処理数（デフォルト: 4）
             
         Returns:
             dict: 収集結果のサマリー
@@ -458,81 +461,171 @@ class JPX400DataCollector:
         print(f"{'='*80}")
         print(f"対象銘柄数: {len(symbols)}")
         print(f"当日データ補完: {'有効' if complement_today else '無効'}")
+        print(f"並列処理数: {max_workers}")
         print(f"{'='*80}\n")
         
         results = []
         success_count = 0
         error_count = 0
-        
         skip_count = 0
+        processed_count = 0
         
-        for i, symbol in enumerate(symbols, 1):
-            # 停止チェック
-            if stop_check and stop_check():
-                print(f"\n[データ収集] 停止要求を検出しました。処理を中断します。")
-                return {
-                    'success': True,
-                    'stopped': True,
-                    'total_count': len(symbols),
-                    'processed_count': i - 1,
-                    'success_count': success_count,
-                    'skip_count': skip_count,
-                    'error_count': error_count,
-                    'results': results
+        # 並列処理を使用するかどうか（max_workers > 1の場合）
+        use_parallel = max_workers > 1
+        
+        if use_parallel:
+            # 並列処理モード
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                # 各銘柄の処理を並列実行
+                future_to_symbol = {
+                    executor.submit(self.collect_symbol_data, symbol, complement_today): symbol
+                    for symbol in symbols
                 }
-            
-            print(f"[{i}/{len(symbols)}] {symbol} のデータ収集中...", end=" ")
-            
-            result = self.collect_symbol_data(symbol, complement_today)
-            results.append(result)
-            
-            if result['success']:
-                if result.get('skipped', False):
-                    # スキップされた場合
-                    skip_count += 1
-                    reason = result.get('reason', '最新データあり')
-                    print(f"⊘ スキップ: {reason}")
-                else:
-                    # データ取得・保存が完了した場合
-                    success_count += 1
-                    retry_info = f" (リトライ: {result.get('retry_count', 0)}回)" if result.get('retry_count', 0) > 0 else ""
-                    fetch_type = result.get('fetch_type', 'unknown')
-                    fetch_info = f" [{fetch_type}]" if fetch_type != 'unknown' else ""
-                    print(f"✓ 完了 (保存: {result['saved_count']}, 更新: {result['updated_count']}){fetch_info}{retry_info}")
-            else:
-                error_count += 1
-                error_msg = result.get('error', '不明なエラー')
-                # エラーメッセージが長い場合は短縮
-                if len(error_msg) > 60:
-                    error_msg = error_msg[:57] + "..."
-                print(f"✗ エラー: {error_msg}")
-            
-            # 進捗コールバック
-            if progress_callback:
-                progress_callback(symbol, i, len(symbols), result)
-            
-            # レート制限対策: リクエスト間に待機時間を追加
-            # 0.5秒〜1.0秒のランダムな待機時間
-            if i < len(symbols):  # 最後の銘柄以外は待機
-                wait_time = random.uniform(0.5, 1.0)
-                # 待機中も停止チェック（0.1秒ごとにチェック）
-                elapsed = 0.0
-                while elapsed < wait_time:
+                
+                # 完了したタスクから順に処理
+                for future in as_completed(future_to_symbol):
+                    # 停止チェック
                     if stop_check and stop_check():
                         print(f"\n[データ収集] 停止要求を検出しました。処理を中断します。")
+                        # 実行中のタスクをキャンセル
+                        for f in future_to_symbol:
+                            f.cancel()
                         return {
                             'success': True,
                             'stopped': True,
                             'total_count': len(symbols),
-                            'processed_count': i,
+                            'processed_count': processed_count,
                             'success_count': success_count,
                             'skip_count': skip_count,
                             'error_count': error_count,
                             'results': results
                         }
-                    sleep_interval = min(0.1, wait_time - elapsed)
-                    time.sleep(sleep_interval)
-                    elapsed += sleep_interval
+                    
+                    symbol = future_to_symbol[future]
+                    processed_count += 1
+                    
+                    try:
+                        result = future.result()
+                        results.append(result)
+                        
+                        if result['success']:
+                            if result.get('skipped', False):
+                                # スキップされた場合
+                                skip_count += 1
+                                reason = result.get('reason', '最新データあり')
+                                print(f"[{processed_count}/{len(symbols)}] {symbol}: ⊘ スキップ: {reason}")
+                            else:
+                                # データ取得・保存が完了した場合
+                                success_count += 1
+                                retry_info = f" (リトライ: {result.get('retry_count', 0)}回)" if result.get('retry_count', 0) > 0 else ""
+                                fetch_type = result.get('fetch_type', 'unknown')
+                                fetch_info = f" [{fetch_type}]" if fetch_type != 'unknown' else ""
+                                print(f"[{processed_count}/{len(symbols)}] {symbol}: ✓ 完了 (保存: {result['saved_count']}, 更新: {result['updated_count']}){fetch_info}{retry_info}")
+                        else:
+                            error_count += 1
+                            error_msg = result.get('error', '不明なエラー')
+                            # エラーメッセージが長い場合は短縮
+                            if len(error_msg) > 60:
+                                error_msg = error_msg[:57] + "..."
+                            print(f"[{processed_count}/{len(symbols)}] {symbol}: ✗ エラー: {error_msg}")
+                        
+                        # 進捗コールバック
+                        if progress_callback:
+                            progress_callback(symbol, processed_count, len(symbols), result)
+                    
+                    except Exception as e:
+                        # タスク実行時の例外をキャッチ
+                        error_count += 1
+                        error_msg = str(e)
+                        if len(error_msg) > 60:
+                            error_msg = error_msg[:57] + "..."
+                        print(f"[{processed_count}/{len(symbols)}] {symbol}: ✗ 例外: {error_msg}")
+                        
+                        result = {
+                            'symbol': symbol,
+                            'success': False,
+                            'error': f'タスク実行エラー: {error_msg}',
+                            'retry_count': 0
+                        }
+                        results.append(result)
+                        
+                        if progress_callback:
+                            progress_callback(symbol, processed_count, len(symbols), result)
+                    
+                    # 並列処理時の待機時間（短縮版: 0.1〜0.3秒）
+                    # ただし、最後のタスク以外のみ
+                    if processed_count < len(symbols):
+                        wait_time = random.uniform(0.1, 0.3)
+                        time.sleep(wait_time)
+        else:
+            # 順次処理モード（従来の実装）
+            for i, symbol in enumerate(symbols, 1):
+                # 停止チェック
+                if stop_check and stop_check():
+                    print(f"\n[データ収集] 停止要求を検出しました。処理を中断します。")
+                    return {
+                        'success': True,
+                        'stopped': True,
+                        'total_count': len(symbols),
+                        'processed_count': i - 1,
+                        'success_count': success_count,
+                        'skip_count': skip_count,
+                        'error_count': error_count,
+                        'results': results
+                    }
+                
+                print(f"[{i}/{len(symbols)}] {symbol} のデータ収集中...", end=" ")
+                
+                result = self.collect_symbol_data(symbol, complement_today)
+                results.append(result)
+                
+                if result['success']:
+                    if result.get('skipped', False):
+                        # スキップされた場合
+                        skip_count += 1
+                        reason = result.get('reason', '最新データあり')
+                        print(f"⊘ スキップ: {reason}")
+                    else:
+                        # データ取得・保存が完了した場合
+                        success_count += 1
+                        retry_info = f" (リトライ: {result.get('retry_count', 0)}回)" if result.get('retry_count', 0) > 0 else ""
+                        fetch_type = result.get('fetch_type', 'unknown')
+                        fetch_info = f" [{fetch_type}]" if fetch_type != 'unknown' else ""
+                        print(f"✓ 完了 (保存: {result['saved_count']}, 更新: {result['updated_count']}){fetch_info}{retry_info}")
+                else:
+                    error_count += 1
+                    error_msg = result.get('error', '不明なエラー')
+                    # エラーメッセージが長い場合は短縮
+                    if len(error_msg) > 60:
+                        error_msg = error_msg[:57] + "..."
+                    print(f"✗ エラー: {error_msg}")
+                
+                # 進捗コールバック
+                if progress_callback:
+                    progress_callback(symbol, i, len(symbols), result)
+                
+                # レート制限対策: リクエスト間に待機時間を追加
+                # 0.5秒〜1.0秒のランダムな待機時間（順次処理時）
+                if i < len(symbols):  # 最後の銘柄以外は待機
+                    wait_time = random.uniform(0.5, 1.0)
+                    # 待機中も停止チェック（0.1秒ごとにチェック）
+                    elapsed = 0.0
+                    while elapsed < wait_time:
+                        if stop_check and stop_check():
+                            print(f"\n[データ収集] 停止要求を検出しました。処理を中断します。")
+                            return {
+                                'success': True,
+                                'stopped': True,
+                                'total_count': len(symbols),
+                                'processed_count': i,
+                                'success_count': success_count,
+                                'skip_count': skip_count,
+                                'error_count': error_count,
+                                'results': results
+                            }
+                        sleep_interval = min(0.1, wait_time - elapsed)
+                        time.sleep(sleep_interval)
+                        elapsed += sleep_interval
         
         print(f"\n{'='*80}")
         print(f"データ収集完了")

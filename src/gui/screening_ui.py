@@ -329,13 +329,13 @@ class ScreeningUI:
                 "SC時価格", "SC時出来高",
                 "翌1日", "翌2日", "翌3日",
                 "現在価格", "最新出来高",
-                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率",
+                "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "RSI",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
         else:
             columns = (
                 "銘柄コード", "銘柄名", "セクター", "業種",
-                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "状態",
+                "現在価格", "最新出来高", "出来高σ(20日)", "PER", "PBR", "利回り", "ROA", "ROE", "NC比率", "RSI", "状態",
                 "GC 5/25", "GC 25/75", "GC 5/200",
                 "5MA乖離率", "25MA乖離率", "75MA乖離率", "200MA乖離率"
             )
@@ -446,6 +446,7 @@ class ScreeningUI:
         tree.heading("ROA", text="ROA")
         tree.heading("ROE", text="ROE")
         tree.heading("NC比率", text="NC比率")
+        tree.heading("RSI", text="RSI")
         
         if is_history:
             tree.heading("SC時価格", text="SC時価格")
@@ -484,6 +485,7 @@ class ScreeningUI:
         tree.column("ROA", width=50, anchor="e")
         tree.column("ROE", width=50, anchor="e")
         tree.column("NC比率", width=100, anchor="e")
+        tree.column("RSI", width=60, anchor="e")
         
         if is_history:
             tree.column("SC時価格", width=70, anchor="e")
@@ -527,6 +529,21 @@ class ScreeningUI:
         net_cash_ratio_manager = NetCashRatioManager(self.db_path)
         net_cash_ratio_dict = net_cash_ratio_manager.get_net_cash_ratio_batch(symbol_list)
         
+        # RSI計算関数
+        def calc_rsi(series, period: int = 14):
+            """RSIを計算"""
+            import pandas as pd
+            if len(series) < period + 1:
+                return None
+            delta = series.diff()
+            gain = delta.clip(lower=0)
+            loss = -delta.clip(upper=0)
+            avg_gain = gain.rolling(period).mean()
+            avg_loss = loss.rolling(period).mean()
+            rs = avg_gain / avg_loss.replace(0, pd.NA)
+            rsi = 100 - (100 / (1 + rs))
+            return float(rsi.iloc[-1]) if pd.notna(rsi.iloc[-1]) else None
+        
         if is_history:
             # 履歴表示の場合は、resultに既に含まれている値を使用
             # 業種情報がない場合はデータベースから取得（フォールバック）
@@ -566,6 +583,26 @@ class ScreeningUI:
             # ネットキャッシュ比率を取得
             net_cash_ratio = net_cash_ratio_dict.get(symbol) if net_cash_ratio_dict else None
             net_cash_ratio_str = f"{net_cash_ratio:.4f}" if net_cash_ratio is not None else "-"
+            
+            # RSIを計算
+            rsi_value = None
+            rsi_str = "N/A"
+            try:
+                import pandas as pd
+                df_rsi = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                    symbol=symbol,
+                    timeframe='1d',
+                    source='yahoo',
+                    include_temporary=True
+                )
+                if not df_rsi.empty and len(df_rsi) >= 15:  # 14日分のデータ + 1日
+                    close_series = df_rsi['close']
+                    rsi_value = calc_rsi(close_series, period=14)
+                    if rsi_value is not None:
+                        rsi_str = f"{rsi_value:.2f}"
+            except Exception as e:
+                # エラーが発生した場合はN/Aのまま
+                pass
             
             # 価格と出来高の取得
             if is_history:
@@ -697,6 +734,7 @@ class ScreeningUI:
                         roa,
                         roe,
                         net_cash_ratio_str,  # ネットキャッシュ比率
+                        rsi_str,  # RSI
                         ma5_str,
                         ma25_str,
                         ma75_str,
@@ -722,6 +760,7 @@ class ScreeningUI:
                         roa,
                         roe,
                         net_cash_ratio_str,  # ネットキャッシュ比率
+                        rsi_str,  # RSI
                         status,
                         gc5_25_str,
                         gc25_75_str,
