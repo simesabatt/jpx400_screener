@@ -59,6 +59,14 @@ JPX400銘柄のテクニカル分析と自動スクリーニングを行うア�
 
 このプロジェクトが役に立ったと感じていただけましたら、GitHubでスター（⭐）を付けていただけると、作者の励みになります！
 
+## 💝 開発支援のお願い
+
+このプロジェクトの継続的な開発と改善のため、GitHub Sponsorsでのご支援をいただけると大変ありがたいです。
+
+[![GitHub Sponsors](https://img.shields.io/badge/sponsor-30363D?style=for-the-badge&logo=GitHub-Sponsors&logoColor=#EA4AAA)](https://github.com/sponsors/simesabatt)
+
+ご支援いただいた方には、心より感謝申し上げます。いただいたご支援は、プロジェクトの機能改善、バグ修正、パフォーマンス向上などに活用させていただきます。
+
 ---
 
 ## 🖥️ 必要なもの
