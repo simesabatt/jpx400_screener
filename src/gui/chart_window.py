@@ -111,13 +111,18 @@ class ChartWindow:
             return pd.DataFrame()
         
         # 週ごとにグループ化（週末を基準: 金曜終値）
-        df_weekly = df_daily.resample('W-FRI').agg({
+        agg_dict = {
             'open': 'first',
             'high': 'max',
             'low': 'min',
             'close': 'last',
             'volume': 'sum'
-        })
+        }
+        # adjusted_closeが存在する場合は含める
+        if 'adjusted_close' in df_daily.columns:
+            agg_dict['adjusted_close'] = 'last'
+        
+        df_weekly = df_daily.resample('W-FRI').agg(agg_dict)
         
         # 空の行を削除
         df_weekly = df_weekly.dropna()
@@ -138,13 +143,18 @@ class ChartWindow:
             return pd.DataFrame()
         
         # 月ごとにグループ化
-        df_monthly = df_daily.resample('ME').agg({
+        agg_dict = {
             'open': 'first',
             'high': 'max',
             'low': 'min',
             'close': 'last',
             'volume': 'sum'
-        })
+        }
+        # adjusted_closeが存在する場合は含める
+        if 'adjusted_close' in df_daily.columns:
+            agg_dict['adjusted_close'] = 'last'
+        
+        df_monthly = df_daily.resample('ME').agg(agg_dict)
         
         # 空の行を削除
         df_monthly = df_monthly.dropna()
@@ -154,8 +164,14 @@ class ChartWindow:
     def _calculate_macd(self, df: pd.DataFrame, short: int = 6, long: int = 13, signal: int = 5) -> pd.DataFrame:
         """MACDを計算し、macd, macd_signal, macd_hist列を追加"""
         out = df.copy()
-        ema_short = out['close'].ewm(span=short, adjust=False, min_periods=short).mean()
-        ema_long = out['close'].ewm(span=long, adjust=False, min_periods=long).mean()
+        # 調整済み価格を使用（存在し、0でない場合）
+        if 'adjusted_close' in out.columns and out['adjusted_close'].notna().any():
+            # adjusted_closeが0の場合はcloseを使用
+            close_col = out['adjusted_close'].replace(0, pd.NA).fillna(out['close'])
+        else:
+            close_col = out['close']
+        ema_short = close_col.ewm(span=short, adjust=False, min_periods=short).mean()
+        ema_long = close_col.ewm(span=long, adjust=False, min_periods=long).mean()
         out['macd'] = ema_short - ema_long
         out['macd_signal'] = out['macd'].ewm(span=signal, adjust=False, min_periods=signal).mean()
         out['macd_hist'] = out['macd'] - out['macd_signal']
@@ -164,9 +180,41 @@ class ChartWindow:
     def _calculate_stochastic(self, df: pd.DataFrame, k_period: int = 9, smooth_k: int = 3, d_period: int = 3) -> pd.DataFrame:
         """Stochastic Slow (K,D) を計算し、stoch_k, stoch_d列を追加"""
         out = df.copy()
-        lowest_low = out['low'].rolling(window=k_period, min_periods=k_period).min()
-        highest_high = out['high'].rolling(window=k_period, min_periods=k_period).max()
-        raw_k = (out['close'] - lowest_low) / (highest_high - lowest_low) * 100
+        # 調整済み価格を使用（存在し、0でない場合）
+        if 'adjusted_close' in out.columns and out['adjusted_close'].notna().any():
+            # adjusted_closeが0の場合はcloseを使用
+            close_col = out['adjusted_close'].replace(0, pd.NA).fillna(out['close'])
+        else:
+            close_col = out['close']
+        # highとlowは、既に調整済み価格になっている場合はそのまま使用
+        # データベースのhigh, lowが既に調整済み価格かどうかを判定
+        # （open/closeとadjusted_close/closeの比率がほぼ同じ場合は調整済み）
+        use_adjusted_hl = False
+        if len(out) > 0 and 'adjusted_close' in out.columns:
+            sample_idx = 0
+            if out['close'].iloc[sample_idx] != 0:
+                open_close_ratio = out['open'].iloc[sample_idx] / out['close'].iloc[sample_idx]
+                adj_close_val = out['adjusted_close'].iloc[sample_idx]
+                close_val = out['close'].iloc[sample_idx]
+                if adj_close_val != 0 and close_val != 0:
+                    adj_close_ratio = adj_close_val / close_val
+                    # 比率がほぼ同じ（誤差1%以内）場合は、high, lowも調整済み価格
+                    use_adjusted_hl = abs(open_close_ratio - adj_close_ratio) < 0.01
+        
+        if use_adjusted_hl:
+            # high, lowは既に調整済み価格
+            lowest_low = out['low'].rolling(window=k_period, min_periods=k_period).min()
+            highest_high = out['high'].rolling(window=k_period, min_periods=k_period).max()
+        else:
+            # high, lowを調整済み価格に変換
+            # 各時点での調整係数を計算
+            adjustment_factors = (close_col / out['close'].replace(0, 1)).fillna(1.0)
+            adjusted_low = out['low'] * adjustment_factors
+            adjusted_high = out['high'] * adjustment_factors
+            lowest_low = adjusted_low.rolling(window=k_period, min_periods=k_period).min()
+            highest_high = adjusted_high.rolling(window=k_period, min_periods=k_period).max()
+        
+        raw_k = (close_col - lowest_low) / (highest_high - lowest_low) * 100
         out['stoch_k'] = raw_k.rolling(window=smooth_k, min_periods=smooth_k).mean()
         out['stoch_d'] = out['stoch_k'].rolling(window=d_period, min_periods=d_period).mean()
         return out
@@ -762,12 +810,55 @@ class ChartWindow:
         if df.empty:
             return
         
+        # 調整済み価格を使用するかどうかを判定
+        use_adjusted = 'adjusted_close' in df.columns and df['adjusted_close'].notna().any()
+        
+        if use_adjusted:
+            # データベースのopen, high, lowが既に調整済み価格になっているかどうかを判定
+            # openとadjusted_closeの比率を確認（調整済み価格の場合、open/close ≈ adjusted_close/close）
+            already_adjusted = False
+            if len(df) > 0:
+                # 調整係数が1.0以外のデータを探す
+                non_one_factors = df[(df['adjusted_close'] / df['close'].replace(0, 1)).fillna(1.0) != 1.0]
+                if not non_one_factors.empty:
+                    # 最初の行のインデックス位置を取得（整数インデックス）
+                    sample_idx = df.index.get_loc(non_one_factors.index[0])
+                    if sample_idx < len(df) and df['close'].iloc[sample_idx] != 0:
+                        open_close_ratio = df['open'].iloc[sample_idx] / df['close'].iloc[sample_idx]
+                        adj_close_ratio = df['adjusted_close'].iloc[sample_idx] / df['close'].iloc[sample_idx]
+                        # 比率がほぼ同じ（誤差1%以内）場合は、既に調整済み価格として扱う
+                        already_adjusted = abs(open_close_ratio - adj_close_ratio) < 0.01
+            
+            if already_adjusted:
+                # データベースのopen, high, lowが既に調整済み価格の場合は、そのまま使用
+                opens = df['open'].values
+                highs = df['high'].values
+                lows = df['low'].values
+                closes = df['adjusted_close'].values
+            else:
+                # データベースのopen, high, lowが未調整価格の場合は、調整係数を適用
+                # 各時点での調整係数を計算（adjusted_close / close）
+                # adjusted_closeが0またはNULLの場合は、closeを使用
+                # closeが0の場合は調整係数を1.0とする
+                adjustment_factors = (df['adjusted_close'].fillna(df['close']) / df['close'].replace(0, 1)).fillna(1.0)
+                # adjusted_closeが0の場合は、closeを使用
+                # adjusted_closeが0の場合は、closeを使用
+                adjusted_closes = df['adjusted_close'].fillna(df['close'])
+                adjusted_closes = adjusted_closes.where(adjusted_closes != 0, df['close']).values
+                # OHLCVすべてに各時点の調整係数を適用
+                opens = (df['open'] * adjustment_factors).values
+                highs = (df['high'] * adjustment_factors).values
+                lows = (df['low'] * adjustment_factors).values
+                closes = adjusted_closes
+        else:
+            # 調整済み価格が存在しない場合は通常の価格を使用
+            opens = df['open'].values
+            highs = df['high'].values
+            lows = df['low'].values
+            closes = df['close'].values
+        
         # データを準備
         dates = df.index
-        opens = df['open'].values
-        highs = df['high'].values
-        lows = df['low'].values
-        closes = df['close'].values
         volumes = df['volume'].values if 'volume' in df.columns else None
         
         # 陽線と陰線を分ける
@@ -804,21 +895,26 @@ class ChartWindow:
             ax_price.bar(date, height, width=width, bottom=bottom, 
                   color=color, edgecolor='black', linewidth=0.5, alpha=0.8)
         
-        # 移動平均線を追加
+        # 移動平均線を追加（調整済み価格を使用）
+        if use_adjusted:
+            # adjusted_closeが0の場合はcloseを使用
+            close_col = df['adjusted_close'].replace(0, pd.NA).fillna(df['close'])
+        else:
+            close_col = df['close']
         if len(df) >= 5:
-            df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
+            df['ma5'] = close_col.rolling(window=5, min_periods=1).mean()
             ax_price.plot(dates, df['ma5'], label='5MA', color='orange', linewidth=1, alpha=0.7)
         
         if len(df) >= 25:
-            df['ma25'] = df['close'].rolling(window=25, min_periods=1).mean()
+            df['ma25'] = close_col.rolling(window=25, min_periods=1).mean()
             ax_price.plot(dates, df['ma25'], label='25MA', color='green', linewidth=1, alpha=0.7)
         
         if len(df) >= 75:
-            df['ma75'] = df['close'].rolling(window=75, min_periods=1).mean()
+            df['ma75'] = close_col.rolling(window=75, min_periods=1).mean()
             ax_price.plot(dates, df['ma75'], label='75MA', color='purple', linewidth=1, alpha=0.7)
         
         if len(df) >= 200:
-            df['ma200'] = df['close'].rolling(window=200, min_periods=1).mean()
+            df['ma200'] = close_col.rolling(window=200, min_periods=1).mean()
             ax_price.plot(dates, df['ma200'], label='200MA', color='brown', linewidth=1, alpha=0.7)
         
         # 出来高を右軸に表示
@@ -866,12 +962,55 @@ class ChartWindow:
         if df.empty:
             return
         
+        # 調整済み価格を使用するかどうかを判定
+        use_adjusted = 'adjusted_close' in df.columns and df['adjusted_close'].notna().any()
+        
+        if use_adjusted:
+            # データベースのopen, high, lowが既に調整済み価格になっているかどうかを判定
+            # openとadjusted_closeの比率を確認（調整済み価格の場合、open/close ≈ adjusted_close/close）
+            already_adjusted = False
+            if len(df) > 0:
+                # 調整係数が1.0以外のデータを探す
+                non_one_factors = df[(df['adjusted_close'] / df['close'].replace(0, 1)).fillna(1.0) != 1.0]
+                if not non_one_factors.empty:
+                    # 最初の行のインデックス位置を取得（整数インデックス）
+                    sample_idx = df.index.get_loc(non_one_factors.index[0])
+                    if sample_idx < len(df) and df['close'].iloc[sample_idx] != 0:
+                        open_close_ratio = df['open'].iloc[sample_idx] / df['close'].iloc[sample_idx]
+                        adj_close_ratio = df['adjusted_close'].iloc[sample_idx] / df['close'].iloc[sample_idx]
+                        # 比率がほぼ同じ（誤差1%以内）場合は、既に調整済み価格として扱う
+                        already_adjusted = abs(open_close_ratio - adj_close_ratio) < 0.01
+            
+            if already_adjusted:
+                # データベースのopen, high, lowが既に調整済み価格の場合は、そのまま使用
+                opens = df['open'].values
+                highs = df['high'].values
+                lows = df['low'].values
+                closes = df['adjusted_close'].values
+            else:
+                # データベースのopen, high, lowが未調整価格の場合は、調整係数を適用
+                # 各時点での調整係数を計算（adjusted_close / close）
+                # adjusted_closeが0またはNULLの場合は、closeを使用
+                # closeが0の場合は調整係数を1.0とする
+                adjustment_factors = (df['adjusted_close'].fillna(df['close']) / df['close'].replace(0, 1)).fillna(1.0)
+                # adjusted_closeが0の場合は、closeを使用
+                # adjusted_closeが0の場合は、closeを使用
+                adjusted_closes = df['adjusted_close'].fillna(df['close'])
+                adjusted_closes = adjusted_closes.where(adjusted_closes != 0, df['close']).values
+                # OHLCVすべてに各時点の調整係数を適用
+                opens = (df['open'] * adjustment_factors).values
+                highs = (df['high'] * adjustment_factors).values
+                lows = (df['low'] * adjustment_factors).values
+                closes = adjusted_closes
+        else:
+            # 調整済み価格が存在しない場合は通常の価格を使用
+            opens = df['open'].values
+            highs = df['high'].values
+            lows = df['low'].values
+            closes = df['close'].values
+        
         # データを準備
         dates = df.index
-        opens = df['open'].values
-        highs = df['high'].values
-        lows = df['low'].values
-        closes = df['close'].values
         
         # 陽線と陰線を分ける
         up = closes >= opens
@@ -909,21 +1048,26 @@ class ChartWindow:
             ax.bar(date, height, width=width, bottom=bottom, 
                   color=color, edgecolor='black', linewidth=0.5, alpha=0.8)
         
-        # 移動平均線を追加
+        # 移動平均線を追加（調整済み価格を使用）
+        if use_adjusted:
+            # adjusted_closeが0の場合はcloseを使用
+            close_col = df['adjusted_close'].replace(0, pd.NA).fillna(df['close'])
+        else:
+            close_col = df['close']
         if len(df) >= 5:
-            df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
+            df['ma5'] = close_col.rolling(window=5, min_periods=1).mean()
             ax.plot(dates, df['ma5'], label='5MA', color='orange', linewidth=1, alpha=0.7)
         
         if len(df) >= 25:
-            df['ma25'] = df['close'].rolling(window=25, min_periods=1).mean()
+            df['ma25'] = close_col.rolling(window=25, min_periods=1).mean()
             ax.plot(dates, df['ma25'], label='25MA', color='green', linewidth=1, alpha=0.7)
         
         if len(df) >= 75:
-            df['ma75'] = df['close'].rolling(window=75, min_periods=1).mean()
+            df['ma75'] = close_col.rolling(window=75, min_periods=1).mean()
             ax.plot(dates, df['ma75'], label='75MA', color='purple', linewidth=1, alpha=0.7)
         
         if len(df) >= 200:
-            df['ma200'] = df['close'].rolling(window=200, min_periods=1).mean()
+            df['ma200'] = close_col.rolling(window=200, min_periods=1).mean()
             ax.plot(dates, df['ma200'], label='200MA', color='brown', linewidth=1, alpha=0.7)
         
         # グラフの設定

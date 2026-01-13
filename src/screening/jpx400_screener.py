@@ -115,8 +115,11 @@ class JPX400Screener:
         long = params.get("long_period", 13)
         signal = params.get("signal_period", 5)
 
-        ema_short = df["close"].ewm(span=short, adjust=False, min_periods=short).mean()
-        ema_long = df["close"].ewm(span=long, adjust=False, min_periods=long).mean()
+        # 調整済み価格を使用（存在する場合）
+        close_col = 'adjusted_close' if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any() else 'close'
+
+        ema_short = df[close_col].ewm(span=short, adjust=False, min_periods=short).mean()
+        ema_long = df[close_col].ewm(span=long, adjust=False, min_periods=long).mean()
         df["macd"] = ema_short - ema_long
         df["macd_signal"] = df["macd"].ewm(span=signal, adjust=False, min_periods=signal).mean()
         df["macd_hist"] = df["macd"] - df["macd_signal"]
@@ -129,9 +132,12 @@ class JPX400Screener:
         smooth_k = params.get("smooth_k", 3)
         d_period = params.get("d_period", 3)
 
+        # 調整済み価格を使用（存在する場合）
+        close_col = 'adjusted_close' if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any() else 'close'
+
         lowest_low = df["low"].rolling(window=k_period, min_periods=k_period).min()
         highest_high = df["high"].rolling(window=k_period, min_periods=k_period).max()
-        raw_k = (df["close"] - lowest_low) / (highest_high - lowest_low) * 100
+        raw_k = (df[close_col] - lowest_low) / (highest_high - lowest_low) * 100
 
         df["stoch_k"] = raw_k.rolling(window=smooth_k, min_periods=smooth_k).mean()
         df["stoch_d"] = df["stoch_k"].rolling(window=d_period, min_periods=d_period).mean()
@@ -238,11 +244,14 @@ class JPX400Screener:
         """
         df = df.copy()
         
+        # 調整済み価格を使用（存在する場合）
+        close_col = 'adjusted_close' if 'adjusted_close' in df.columns and df['adjusted_close'].notna().any() else 'close'
+        
         # 移動平均線を計算
-        df['ma5'] = df['close'].rolling(window=5, min_periods=1).mean()
-        df['ma25'] = df['close'].rolling(window=25, min_periods=1).mean()
-        df['ma75'] = df['close'].rolling(window=75, min_periods=1).mean()
-        df['ma200'] = df['close'].rolling(window=200, min_periods=1).mean()
+        df['ma5'] = df[close_col].rolling(window=5, min_periods=1).mean()
+        df['ma25'] = df[close_col].rolling(window=25, min_periods=1).mean()
+        df['ma75'] = df[close_col].rolling(window=75, min_periods=1).mean()
+        df['ma200'] = df[close_col].rolling(window=200, min_periods=1).mean()
         
         return df
     

@@ -60,7 +60,8 @@ class JPX400DataCollector:
         if is_after_19:
             try:
                 ticker = yf.Ticker(f"{symbol}.T")
-                df_official = ticker.history(period="2d", interval="1d")
+                # auto_adjust=False, actions=Trueで調整済み価格と未調整価格の両方を取得
+                df_official = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=True)
                 
                 if not df_official.empty:
                     # 列名を小文字に統一
@@ -77,12 +78,43 @@ class JPX400DataCollector:
                     if latest_date == today:
                         # 正式な日足データが取得できた
                         official_row = df_official.iloc[-1]
+                        
+                        # データの整合性チェック：異常なデータを修正
+                        open_val = float(official_row['open'])
+                        high_val = float(official_row['high'])
+                        low_val = float(official_row['low'])
+                        close_val = float(official_row['close'])
+                        
+                        # closeがhighより高い、またはlowより低い場合は修正
+                        if close_val > high_val:
+                            high_val = close_val
+                            print(f"[{symbol}] データ整合性修正: {latest_date} - close({close_val}) > high → highを{close_val}に修正")
+                        elif close_val < low_val:
+                            low_val = close_val
+                            print(f"[{symbol}] データ整合性修正: {latest_date} - close({close_val}) < low → lowを{close_val}に修正")
+                        
+                        # openがhighより高い、またはlowより低い場合も修正
+                        if open_val > high_val:
+                            high_val = open_val
+                            print(f"[{symbol}] データ整合性修正: {latest_date} - open({open_val}) > high → highを{open_val}に修正")
+                        elif open_val < low_val:
+                            low_val = open_val
+                            print(f"[{symbol}] データ整合性修正: {latest_date} - open({open_val}) < low → lowを{open_val}に修正")
+                        
+                        # adjusted_closeを取得（存在する場合）
+                        adj_close = float(official_row.get('adj close', close_val)) if 'adj close' in official_row else close_val
+                        
+                        # 調整係数を計算（Adj Close / Close）
+                        adjustment_factor = adj_close / close_val if close_val != 0 else 1.0
+                        
+                        # Open, High, Lowに調整係数を適用
                         today_data = {
-                            'open': float(official_row['open']),
-                            'high': float(official_row['high']),
-                            'low': float(official_row['low']),
-                            'close': float(official_row['close']),
+                            'open': open_val * adjustment_factor,
+                            'high': high_val * adjustment_factor,
+                            'low': low_val * adjustment_factor,
+                            'close': adj_close,  # 調整済み価格を使用
                             'volume': int(official_row['volume']),
+                            'adjusted_close': adj_close,
                             'is_temporary_close': 0  # 正式データ
                         }
                         
@@ -132,12 +164,25 @@ class JPX400DataCollector:
                     return df_daily
                 
                 # 当日のOHLCVを作成（仮終値）
+                # 調整済み価格は、最新の調整係数を使用して計算
+                # 過去データから最新の調整係数を取得
+                latest_adjustment_factor = 1.0
+                if not df_daily.empty and 'adjusted_close' in df_daily.columns:
+                    # 最新のデータで調整係数を計算
+                    latest_row = df_daily.iloc[-1]
+                    latest_close = latest_row.get('close', 0)
+                    latest_adj_close = latest_row.get('adjusted_close', latest_close)
+                    if latest_close != 0:
+                        latest_adjustment_factor = latest_adj_close / latest_close
+                
+                current_close = float(df_1m_today.iloc[-1]['close'])
                 today_data = {
                     'open': float(df_1m_today.iloc[0]['open']),
                     'high': float(df_1m_today['high'].max()),
                     'low': float(df_1m_today['low'].min()),
-                    'close': float(df_1m_today.iloc[-1]['close']),  # 現在価格（仮の終値）
+                    'close': current_close,  # 現在価格（仮の終値）
                     'volume': int(df_1m_today['volume'].sum()),
+                    'adjusted_close': current_close * latest_adjustment_factor,  # 調整済み価格
                     'is_temporary_close': 1  # 仮終値フラグ
                 }
                 
@@ -228,9 +273,19 @@ class JPX400DataCollector:
                 needs_update = True
                 needs_full_fetch = False  # 当日データのみ更新
             else:
-                # 正式データがある場合は更新不要
-                needs_update = False
-                needs_full_fetch = False
+                # 正式データがある場合でも、調整済み価格が正しく設定されているか確認
+                # adjusted_closeがNULL、または0、またはcloseと同じ値の場合は更新が必要
+                adjusted_close = latest_row.get('adjusted_close')
+                close = latest_row.get('close', 0)
+                
+                if adjusted_close is None or adjusted_close == 0 or (close != 0 and adjusted_close == close):
+                    # 調整済み価格が正しく設定されていない場合は更新が必要
+                    needs_update = True
+                    needs_full_fetch = False  # 当日データのみ更新
+                else:
+                    # 調整済み価格が正しく設定されている場合は更新不要
+                    needs_update = False
+                    needs_full_fetch = False
         else:
             # 未来の日付（ありえないが念のため）
             needs_update = False
@@ -267,8 +322,143 @@ class JPX400DataCollector:
         # 既存データを確認
         existing_info = self._check_existing_data(symbol)
         
-        # 更新が不要な場合はスキップ
+        # 更新が不要な場合でも、最新日のデータの整合性チェックと調整済み価格の再計算を行う
         if not existing_info['needs_update']:
+            # 最新日のデータを再取得して整合性チェックと調整済み価格の計算を行う
+            try:
+                ticker = yf.Ticker(f"{symbol}.T")
+                # 最新日のデータを取得
+                df_latest = ticker.history(period="2d", interval="1d", auto_adjust=False, actions=True)
+                
+                if not df_latest.empty:
+                    # 列名を小文字に統一
+                    df_latest.columns = [col.lower() for col in df_latest.columns]
+                    
+                    # タイムゾーン情報を削除
+                    if df_latest.index.tz is not None:
+                        df_latest.index = df_latest.index.tz_localize(None)
+                    
+                    # 'adj close'を'adjusted_close'にリネーム
+                    if 'adj close' in df_latest.columns:
+                        df_latest = df_latest.rename(columns={'adj close': 'adjusted_close'})
+                    
+                    # 既存データを取得
+                    df_existing = self.ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                        symbol=symbol,
+                        timeframe='1d',
+                        source='yahoo',
+                        include_temporary=True
+                    )
+                    
+                    if not df_existing.empty:
+                        # 最新日のデータを整合性チェックと調整済み価格の計算を行う
+                        today = date.today()
+                        latest_date = df_latest.index[-1].date()
+                        
+                        if latest_date == today or latest_date == existing_info['latest_date']:
+                            # 最新日のデータを処理
+                            for idx in df_latest.index:
+                                row = df_latest.loc[idx]
+                                open_val = float(row.get('open', 0))
+                                high_val = float(row.get('high', 0))
+                                low_val = float(row.get('low', 0))
+                                close_val = float(row.get('close', 0))
+                                
+                                # 整合性チェックと修正
+                                if close_val > high_val:
+                                    high_val = close_val
+                                    print(f"[{symbol}] データ整合性修正: {idx.date()} - close({close_val}) > high → highを{close_val}に修正")
+                                elif close_val < low_val:
+                                    low_val = close_val
+                                    print(f"[{symbol}] データ整合性修正: {idx.date()} - close({close_val}) < low → lowを{close_val}に修正")
+                                
+                                if open_val > high_val:
+                                    high_val = open_val
+                                    print(f"[{symbol}] データ整合性修正: {idx.date()} - open({open_val}) > high → highを{open_val}に修正")
+                                elif open_val < low_val:
+                                    low_val = open_val
+                                    print(f"[{symbol}] データ整合性修正: {idx.date()} - open({open_val}) < low → lowを{open_val}に修正")
+                                
+                                # 調整済み価格を計算
+                                if 'adjusted_close' in df_latest.columns:
+                                    adj_close = float(row.get('adjusted_close', close_val))
+                                    if close_val != 0:
+                                        adjustment_factor = adj_close / close_val
+                                    else:
+                                        adjustment_factor = 1.0
+                                    
+                                    # Open, High, Lowに調整係数を適用
+                                    adjusted_open = open_val * adjustment_factor
+                                    adjusted_high = high_val * adjustment_factor
+                                    adjusted_low = low_val * adjustment_factor
+                                    
+                                    # 既存データと比較して、変更がある場合は更新
+                                    if idx in df_existing.index:
+                                        existing_row = df_existing.loc[idx]
+                                        if (abs(existing_row.get('open', 0) - adjusted_open) > 0.01 or
+                                            abs(existing_row.get('high', 0) - adjusted_high) > 0.01 or
+                                            abs(existing_row.get('low', 0) - adjusted_low) > 0.01 or
+                                            abs(existing_row.get('close', 0) - adj_close) > 0.01 or
+                                            abs(existing_row.get('adjusted_close', 0) - adj_close) > 0.01):
+                                            
+                                            # データを更新
+                                            df_existing.loc[idx, 'open'] = adjusted_open
+                                            df_existing.loc[idx, 'high'] = adjusted_high
+                                            df_existing.loc[idx, 'low'] = adjusted_low
+                                            df_existing.loc[idx, 'close'] = adj_close
+                                            df_existing.loc[idx, 'adjusted_close'] = adj_close
+                                            
+                                            # DBに保存
+                                            result = self.ohlcv_manager.save_ohlcv_data_with_temporary_flag(
+                                                symbol=symbol,
+                                                df=df_existing,
+                                                timeframe='1d',
+                                                source='yahoo',
+                                                overwrite=True,
+                                                allow_temporary_overwrite_latest=True
+                                            )
+                                            
+                                            return {
+                                                'symbol': symbol,
+                                                'success': True,
+                                                'saved_count': result['saved_count'],
+                                                'updated_count': result['updated_count'],
+                                                'skipped_count': result['skipped_count'],
+                                                'total_count': result['total_count'],
+                                                'retry_count': 0,
+                                                'skipped': False,
+                                                'fetch_type': 'integrity_check'
+                                            }
+                                    
+                                    # 最新日のデータを補完
+                                    if complement_today:
+                                        df_existing = self.complement_today_data(symbol, df_existing)
+                                        result = self.ohlcv_manager.save_ohlcv_data_with_temporary_flag(
+                                            symbol=symbol,
+                                            df=df_existing,
+                                            timeframe='1d',
+                                            source='yahoo',
+                                            overwrite=True,
+                                            allow_temporary_overwrite_latest=True
+                                        )
+                                        
+                                        if result['updated_count'] > 0:
+                                            return {
+                                                'symbol': symbol,
+                                                'success': True,
+                                                'saved_count': result['saved_count'],
+                                                'updated_count': result['updated_count'],
+                                                'skipped_count': result['skipped_count'],
+                                                'total_count': result['total_count'],
+                                                'retry_count': 0,
+                                                'skipped': False,
+                                                'fetch_type': 'complement'
+                                            }
+            except Exception as e:
+                # エラーが発生してもスキップ
+                print(f"[{symbol}] 最新データの整合性チェックでエラー: {e}")
+            
+            # 補完が不要または補完しても変更がない場合はスキップ
             return {
                 'symbol': symbol,
                 'success': True,
@@ -311,9 +501,9 @@ class JPX400DataCollector:
                     # 情報取得エラーは無視して続行（データ取得を試みる）
                     pass
                 
-                # 日足データを取得
+                # 日足データを取得（調整済み価格と未調整価格の両方を取得）
                 try:
-                    df_daily = ticker.history(period=period, interval=interval)
+                    df_daily = ticker.history(period=period, interval=interval, auto_adjust=False, actions=True)
                 except Exception as history_error:
                     error_str = str(history_error)
                     # 404エラーやdelistedエラーを検出
@@ -336,13 +526,71 @@ class JPX400DataCollector:
                 # 列名を小文字に統一
                 df_daily.columns = [col.lower() for col in df_daily.columns]
                 
-                # 必要な列のみ抽出
+                # 必要な列を抽出（adjusted closeが存在する場合は含める）
                 required_cols = ['open', 'high', 'low', 'close', 'volume']
-                df_daily = df_daily[required_cols]
+                if 'adj close' in df_daily.columns:
+                    required_cols.append('adj close')
+                # 存在する列のみ抽出
+                available_cols = [col for col in required_cols if col in df_daily.columns]
+                df_daily = df_daily[available_cols]
+                
+                # 'adj close'を'adjusted_close'にリネーム（統一性のため）
+                if 'adj close' in df_daily.columns:
+                    df_daily = df_daily.rename(columns={'adj close': 'adjusted_close'})
                 
                 # タイムゾーン情報を削除
                 if df_daily.index.tz is not None:
                     df_daily.index = df_daily.index.tz_localize(None)
+                
+                # データの整合性チェック：異常なデータ（close > high や close < low）を修正
+                # yfinanceのデータに異常がある場合があるため、整合性を確保
+                # まず整合性を確保してから、調整済み価格を計算する
+                for idx in df_daily.index:
+                    row = df_daily.loc[idx]
+                    open_val = float(row.get('open', 0))
+                    high_val = float(row.get('high', 0))
+                    low_val = float(row.get('low', 0))
+                    close_val = float(row.get('close', 0))
+                    
+                    # 整合性チェックと修正
+                    # closeがhighより高い、またはlowより低い場合は修正
+                    if close_val > high_val:
+                        # closeがhighより高い場合は、highをcloseに合わせる
+                        high_val = close_val
+                        print(f"[{symbol}] データ整合性修正: {idx.date()} - close({close_val}) > high → highを{close_val}に修正")
+                    elif close_val < low_val:
+                        # closeがlowより低い場合は、lowをcloseに合わせる
+                        low_val = close_val
+                        print(f"[{symbol}] データ整合性修正: {idx.date()} - close({close_val}) < low → lowを{close_val}に修正")
+                    
+                    # openがhighより高い、またはlowより低い場合も修正
+                    if open_val > high_val:
+                        high_val = open_val
+                        print(f"[{symbol}] データ整合性修正: {idx.date()} - open({open_val}) > high → highを{open_val}に修正")
+                    elif open_val < low_val:
+                        low_val = open_val
+                        print(f"[{symbol}] データ整合性修正: {idx.date()} - open({open_val}) < low → lowを{open_val}に修正")
+                    
+                    # 整合性を確保した後、調整済み価格を計算
+                    if 'adjusted_close' in df_daily.columns:
+                        adj_close = float(row.get('adjusted_close', close_val))
+                        if close_val != 0:
+                            adjustment_factor = adj_close / close_val
+                        else:
+                            adjustment_factor = 1.0
+                        
+                        # Open, High, Lowに調整係数を適用（整合性を確保した値を使用）
+                        df_daily.loc[idx, 'open'] = open_val * adjustment_factor
+                        df_daily.loc[idx, 'high'] = high_val * adjustment_factor
+                        df_daily.loc[idx, 'low'] = low_val * adjustment_factor
+                        df_daily.loc[idx, 'close'] = adj_close  # 調整済み価格を使用
+                        df_daily.loc[idx, 'adjusted_close'] = adj_close
+                    else:
+                        # adjusted_closeがない場合は、整合性を確保した値をそのまま使用
+                        df_daily.loc[idx, 'open'] = open_val
+                        df_daily.loc[idx, 'high'] = high_val
+                        df_daily.loc[idx, 'low'] = low_val
+                        df_daily.loc[idx, 'close'] = close_val
                 
                 # 部分取得の場合は既存データとマージ
                 if not existing_info['needs_full_fetch'] and existing_info['has_data']:
@@ -370,6 +618,103 @@ class JPX400DataCollector:
                 # 仮終値フラグがない場合は0（正式）を設定
                 if 'is_temporary_close' not in df_daily.columns:
                     df_daily['is_temporary_close'] = 0
+                
+                # 調整済み価格が取得できた場合、既存データの調整済み価格を自動更新
+                if 'adjusted_close' in df_daily.columns and not df_daily.empty:
+                    # 最新データで調整係数を計算
+                    latest_row = df_daily.iloc[-1]
+                    latest_adj_close = latest_row.get('adjusted_close')
+                    latest_close = latest_row.get('close')
+                    
+                    if latest_adj_close is not None and latest_close is not None and latest_close != 0:
+                        adjustment_factor = float(latest_adj_close) / float(latest_close)
+                        
+                        # 既存データの調整済み価格を更新（調整係数が異なる場合のみ）
+                        # 既存データの最新の調整済み価格と比較して、異なる場合は更新
+                        try:
+                            df_existing_check = self.ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+                                symbol=symbol,
+                                timeframe='1d',
+                                source='yahoo',
+                                include_temporary=False  # 正式データのみ
+                            )
+                            
+                            should_update = False
+                            
+                            if not df_existing_check.empty and 'adjusted_close' in df_existing_check.columns:
+                                # 既存データの最新の調整済み価格を確認
+                                latest_existing = df_existing_check.iloc[-1]
+                                existing_adj_close = latest_existing.get('adjusted_close')
+                                existing_close = latest_existing.get('close')
+                                
+                                # 調整係数が異なる場合（1%以上の差がある場合）は更新
+                                if existing_close is not None and existing_close != 0:
+                                    if existing_adj_close is not None:
+                                        existing_factor = float(existing_adj_close) / float(existing_close)
+                                        factor_diff = abs(adjustment_factor - existing_factor) / existing_factor if existing_factor != 0 else 1.0
+                                        
+                                        if factor_diff > 0.01:  # 1%以上の差がある場合
+                                            should_update = True
+                                            print(f"[{symbol}] 調整係数の変化を検出（既存: {existing_factor:.6f}, 新規: {adjustment_factor:.6f}）。既存データを更新します。")
+                                    else:
+                                        # adjusted_closeがNULLの場合は更新
+                                        should_update = True
+                                        print(f"[{symbol}] 調整済み価格が未設定のため、既存データを更新します。")
+                                else:
+                                    # adjusted_closeがcloseと同じ値の場合は更新
+                                    if existing_adj_close is None or existing_adj_close == existing_close:
+                                        should_update = True
+                                        print(f"[{symbol}] 調整済み価格が未設定のため、既存データを更新します。")
+                            else:
+                                # 既存データがない場合はスキップ（新規データのみ保存）
+                                pass
+                            
+                            if should_update:
+                                # 既存データの調整済み価格を一括更新（open, high, low, close, adjusted_closeすべてを更新）
+                                # 株式分割等が発生した場合、過去データも正しく調整する必要がある
+                                import sqlite3
+                                with sqlite3.connect(self.ohlcv_manager.db_path) as conn:
+                                    cursor = conn.cursor()
+                                    # 更新対象のデータを取得
+                                    cursor.execute('''
+                                        SELECT datetime, open, high, low, close, adjusted_close
+                                        FROM ohlcv_data
+                                        WHERE symbol = ? AND timeframe = '1d' AND source = 'yahoo'
+                                          AND (
+                                              adjusted_close IS NULL 
+                                              OR adjusted_close = close
+                                              OR ABS(adjusted_close / NULLIF(close, 0) - ?) > 0.01
+                                          )
+                                    ''', (symbol, adjustment_factor))
+                                    rows_to_update = cursor.fetchall()
+                                    
+                                    rows_updated = 0
+                                    for row in rows_to_update:
+                                        dt_str, open_val, high_val, low_val, close_val, adj_close_val = row
+                                        if close_val == 0:
+                                            continue
+                                        
+                                        # 調整係数を適用してopen, high, low, close, adjusted_closeすべてを更新
+                                        adjusted_open = open_val * adjustment_factor
+                                        adjusted_high = high_val * adjustment_factor
+                                        adjusted_low = low_val * adjustment_factor
+                                        adjusted_close = close_val * adjustment_factor
+                                        
+                                        cursor.execute('''
+                                            UPDATE ohlcv_data
+                                            SET open = ?, high = ?, low = ?, close = ?, adjusted_close = ?
+                                            WHERE symbol = ? AND datetime = ? AND timeframe = '1d' AND source = 'yahoo'
+                                        ''', (adjusted_open, adjusted_high, adjusted_low, adjusted_close, adjusted_close, symbol, dt_str))
+                                        
+                                        if cursor.rowcount > 0:
+                                            rows_updated += 1
+                                    
+                                    conn.commit()
+                                    if rows_updated > 0:
+                                        print(f"[{symbol}] 既存データの調整済み価格を{rows_updated}件更新しました（open, high, low, close, adjusted_closeすべて）")
+                        except Exception as e:
+                            # エラーが発生してもデータ収集は続行
+                            print(f"[{symbol}] 既存データの調整済み価格更新でエラー: {e}")
                 
                 # DBに保存（仮終値フラグを考慮）
                 result = self.ohlcv_manager.save_ohlcv_data_with_temporary_flag(

@@ -142,6 +142,57 @@ class DataManagementTab:
         # ネットキャッシュ比率取得ステータス表示
         self.net_cash_ratio_status_var = tk.StringVar(value="")
         ttk.Label(bottom_button_frame, textvariable=self.net_cash_ratio_status_var, foreground="gray").pack(side="left", padx=pad)
+        
+
+        # 強制同期機能（3段目）
+        sync_frame = ttk.Frame(self.parent)
+        sync_frame.pack(fill="x", pady=(0, pad), padx=pad, anchor="w")
+        
+        ttk.Label(sync_frame, text="強制同期:").pack(side="left", padx=pad)
+        
+        # 銘柄コード入力（空欄の場合は全銘柄）
+        ttk.Label(sync_frame, text="銘柄コード(空欄=全銘柄):").pack(side="left", padx=pad)
+        self.sync_symbol_entry = ttk.Entry(sync_frame, width=10)
+        self.sync_symbol_entry.pack(side="left", padx=pad)
+        
+        # 日付入力
+        ttk.Label(sync_frame, text="日付(YYYY-MM-DD):").pack(side="left", padx=pad)
+        self.sync_date_entry = ttk.Entry(sync_frame, width=12)
+        self.sync_date_entry.pack(side="left", padx=pad)
+        # デフォルト値を今日の日付に設定
+        from datetime import date
+        self.sync_date_entry.insert(0, date.today().strftime("%Y-%m-%d"))
+        
+        # 1銘柄強制同期ボタン
+        self.force_sync_button = ttk.Button(
+            sync_frame,
+            text="1銘柄を強制同期",
+            command=self.on_force_sync_date,
+            width=18
+        )
+        self.force_sync_button.pack(side="left", padx=pad)
+        
+        # 全銘柄強制同期ボタン
+        self.force_sync_all_button = ttk.Button(
+            sync_frame,
+            text="指定日の全銘柄を強制同期",
+            command=self.on_force_sync_all_symbols,
+            width=25
+        )
+        self.force_sync_all_button.pack(side="left", padx=pad)
+        
+        # 手動入力ボタン
+        self.manual_input_button = ttk.Button(
+            sync_frame,
+            text="手動入力で修正",
+            command=self.on_manual_input_data,
+            width=18
+        )
+        self.manual_input_button.pack(side="left", padx=pad)
+        
+        # 強制同期ステータス表示
+        self.force_sync_status_var = tk.StringVar(value="")
+        ttk.Label(sync_frame, textvariable=self.force_sync_status_var, foreground="gray").pack(side="left", padx=pad)
 
         # スクリーニング履歴ボタン
         self.show_history_button = ttk.Button(
@@ -151,6 +202,19 @@ class DataManagementTab:
             width=20
         )
         self.show_history_button.pack(side="left", padx=pad)
+        
+        # 株式分割過去データ更新ボタン（debug用）
+        self.update_adjusted_prices_button = ttk.Button(
+            bottom_button_frame,
+            text="株式分割過去データ更新(debug用)",
+            command=self.on_update_adjusted_prices,
+            width=30
+        )
+        self.update_adjusted_prices_button.pack(side="left", padx=pad)
+        
+        # 調整済み価格更新ステータス表示
+        self.adjusted_prices_status_var = tk.StringVar(value="")
+        ttk.Label(bottom_button_frame, textvariable=self.adjusted_prices_status_var, foreground="gray").pack(side="left", padx=pad)
 
         # 全銘柄勝率再計算ボタン（デバッグ用）
         self.recalculate_all_symbols_button = ttk.Button(
@@ -1685,4 +1749,563 @@ class DataManagementTab:
     def get_fetching_state(self) -> bool:
         """銘柄名取得中かどうかを返す"""
         return self._fetching_names
+    
+    def on_force_sync_date(self):
+        """指定日付のデータをyfinanceから強制的に同期"""
+        symbol = self.sync_symbol_entry.get().strip()
+        date_str = self.sync_date_entry.get().strip()
+        
+        if not symbol:
+            messagebox.showwarning("警告", "銘柄コードを入力してください。")
+            return
+        
+        if not date_str:
+            messagebox.showwarning("警告", "日付を入力してください。")
+            return
+        
+        # 日付の形式を確認
+        try:
+            from datetime import datetime
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            messagebox.showerror("エラー", "日付の形式が正しくありません。\n形式: YYYY-MM-DD (例: 2026-01-13)")
+            return
+        
+        # 確認ダイアログ
+        result = messagebox.askyesno(
+            "確認",
+            f"銘柄 {symbol} の {date_str} のデータを\n"
+            f"yfinanceから強制的に再取得してDBを更新しますか？\n\n"
+            f"※既存のデータは上書きされます。"
+        )
+        
+        if not result:
+            return
+        
+        def sync_in_thread():
+            try:
+                self.force_sync_button.config(state="disabled")
+                self.force_sync_status_var.set("同期中...")
+                self.status_var.set(f"状態: {symbol} ({date_str}) を強制同期中...")
+                
+                import yfinance as yf
+                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+                import pandas as pd
+                
+                # yfinanceからデータを取得
+                ticker = yf.Ticker(f"{symbol}.T")
+                df_yf = ticker.history(period="1mo", interval="1d", auto_adjust=False, actions=True)
+                
+                if df_yf.empty:
+                    self.force_sync_status_var.set("エラー: データが見つかりません")
+                    self.status_var.set("状態: エラー - データが見つかりません")
+                    messagebox.showerror("エラー", f"銘柄 {symbol} のデータが見つかりませんでした。")
+                    return
+                
+                # 列名を小文字に統一
+                df_yf.columns = [col.lower() for col in df_yf.columns]
+                
+                # 'adj close'を'adjusted_close'にリネーム
+                if 'adj close' in df_yf.columns:
+                    df_yf = df_yf.rename(columns={'adj close': 'adjusted_close'})
+                
+                # タイムゾーン情報を削除
+                if df_yf.index.tz is not None:
+                    df_yf.index = df_yf.index.tz_localize(None)
+                
+                # 指定日付のデータを抽出
+                target_datetime = pd.Timestamp(target_date)
+                if target_datetime not in df_yf.index:
+                    self.force_sync_status_var.set("エラー: 指定日付のデータが見つかりません")
+                    self.status_var.set("状態: エラー - 指定日付のデータが見つかりません")
+                    messagebox.showerror("エラー", f"指定日付 {date_str} のデータが見つかりませんでした。\n取得可能な日付範囲: {df_yf.index[0].date()} ～ {df_yf.index[-1].date()}")
+                    return
+                
+                row = df_yf.loc[target_datetime]
+                open_val = float(row.get('open', 0))
+                high_val = float(row.get('high', 0))
+                low_val = float(row.get('low', 0))
+                close_val = float(row.get('close', 0))
+                adj_close = float(row.get('adjusted_close', close_val)) if 'adjusted_close' in row else close_val
+                
+                # 整合性チェックと修正
+                if close_val > high_val:
+                    high_val = close_val
+                    print(f"[強制同期] {symbol} {date_str}: close({close_val}) > high → highを{close_val}に修正")
+                elif close_val < low_val:
+                    low_val = close_val
+                    print(f"[強制同期] {symbol} {date_str}: close({close_val}) < low → lowを{close_val}に修正")
+                
+                if open_val > high_val:
+                    high_val = open_val
+                    print(f"[強制同期] {symbol} {date_str}: open({open_val}) > high → highを{open_val}に修正")
+                elif open_val < low_val:
+                    low_val = open_val
+                    print(f"[強制同期] {symbol} {date_str}: open({open_val}) < low → lowを{open_val}に修正")
+                
+                # 調整済み価格を計算
+                if close_val != 0:
+                    adjustment_factor = adj_close / close_val
+                else:
+                    adjustment_factor = 1.0
+                
+                # Open, High, Lowに調整係数を適用
+                adjusted_open = open_val * adjustment_factor
+                adjusted_high = high_val * adjustment_factor
+                adjusted_low = low_val * adjustment_factor
+                
+                # DBに保存
+                ohlcv_manager = OHLCVDataManager(self.db_path)
+                
+                # データフレームを作成
+                df_to_save = pd.DataFrame([{
+                    'open': adjusted_open,
+                    'high': adjusted_high,
+                    'low': adjusted_low,
+                    'close': adj_close,
+                    'volume': int(row.get('volume', 0)),
+                    'adjusted_close': adj_close,
+                    'is_temporary_close': 0
+                }], index=[target_datetime])
+                
+                result = ohlcv_manager.save_ohlcv_data_with_temporary_flag(
+                    symbol=symbol,
+                    df=df_to_save,
+                    timeframe='1d',
+                    source='yahoo',
+                    overwrite=True,
+                    allow_temporary_overwrite_latest=True
+                )
+                
+                if result['updated_count'] > 0 or result['saved_count'] > 0:
+                    self.force_sync_status_var.set("完了")
+                    self.status_var.set(f"状態: {symbol} ({date_str}) を強制同期完了")
+                    messagebox.showinfo("完了", f"銘柄 {symbol} の {date_str} のデータを更新しました。\n\n"
+                                                f"更新内容:\n"
+                                                f"  Open: {adjusted_open:.2f}\n"
+                                                f"  High: {adjusted_high:.2f}\n"
+                                                f"  Low: {adjusted_low:.2f}\n"
+                                                f"  Close: {adj_close:.2f}\n"
+                                                f"  Adjusted Close: {adj_close:.2f}")
+                else:
+                    self.force_sync_status_var.set("スキップ（変更なし）")
+                    self.status_var.set(f"状態: {symbol} ({date_str}) は変更なし")
+                    messagebox.showinfo("情報", f"銘柄 {symbol} の {date_str} のデータに変更はありませんでした。")
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.force_sync_status_var.set("エラー")
+                self.status_var.set(f"状態: エラー - {error_msg}")
+                messagebox.showerror("エラー", f"強制同期中にエラーが発生しました:\n{error_msg}")
+                print(f"[強制同期] エラー: {e}")
+            finally:
+                self.force_sync_button.config(state="normal")
+        
+        thread = threading.Thread(target=sync_in_thread, daemon=True)
+        thread.start()
+    
+    def on_force_sync_all_symbols(self):
+        """指定日の全銘柄をyfinanceから強制的に同期"""
+        date_str = self.sync_date_entry.get().strip()
+        
+        if not date_str:
+            messagebox.showwarning("警告", "日付を入力してください。")
+            return
+        
+        # 日付の形式を確認
+        try:
+            from datetime import datetime
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            messagebox.showerror("エラー", "日付の形式が正しくありません。\n形式: YYYY-MM-DD (例: 2026-01-13)")
+            return
+        
+        # 確認ダイアログ
+        result = messagebox.askyesno(
+            "確認",
+            f"指定日 {date_str} の全銘柄のデータを\n"
+            f"yfinanceから強制的に再取得してDBを更新しますか？\n\n"
+            f"※既存のデータは上書きされます。\n"
+            f"※この処理には時間がかかる場合があります（400銘柄の場合、10分以上かかる可能性があります）。"
+        )
+        
+        if not result:
+            return
+        
+        def sync_all_in_thread():
+            try:
+                self.force_sync_all_button.config(state="disabled")
+                self.force_sync_button.config(state="disabled")
+                self.force_sync_status_var.set("同期中...")
+                self.status_var.set(f"状態: {date_str} の全銘柄を強制同期中...")
+                
+                from src.screening.jpx400_manager import JPX400Manager
+                import yfinance as yf
+                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+                import pandas as pd
+                import time
+                
+                # JPX400銘柄リストを取得
+                jpx400_manager = JPX400Manager()
+                symbols = jpx400_manager.load_symbols()
+                
+                if not symbols:
+                    self.force_sync_status_var.set("エラー: 銘柄リストが空です")
+                    self.status_var.set("状態: エラー - 銘柄リストが空です")
+                    messagebox.showerror("エラー", "JPX400銘柄リストが空です。")
+                    return
+                
+                ohlcv_manager = OHLCVDataManager(self.db_path)
+                total_count = len(symbols)
+                success_count = 0
+                error_count = 0
+                updated_count = 0
+                
+                for i, symbol in enumerate(symbols, 1):
+                    try:
+                        self.force_sync_status_var.set(f"処理中: {symbol} ({i}/{total_count})")
+                        self.status_var.set(f"状態: {symbol} ({i}/{total_count}) を強制同期中...")
+                        
+                        # yfinanceからデータを取得
+                        ticker = yf.Ticker(f"{symbol}.T")
+                        df_yf = ticker.history(period="1mo", interval="1d", auto_adjust=False, actions=True)
+                        
+                        if df_yf.empty:
+                            error_count += 1
+                            print(f"[強制同期] {symbol}: データが見つかりません")
+                            continue
+                        
+                        # 列名を小文字に統一
+                        df_yf.columns = [col.lower() for col in df_yf.columns]
+                        
+                        # 'adj close'を'adjusted_close'にリネーム
+                        if 'adj close' in df_yf.columns:
+                            df_yf = df_yf.rename(columns={'adj close': 'adjusted_close'})
+                        
+                        # タイムゾーン情報を削除
+                        if df_yf.index.tz is not None:
+                            df_yf.index = df_yf.index.tz_localize(None)
+                        
+                        # 指定日付のデータを抽出
+                        target_datetime = pd.Timestamp(target_date)
+                        if target_datetime not in df_yf.index:
+                            error_count += 1
+                            print(f"[強制同期] {symbol}: 指定日付 {date_str} のデータが見つかりません")
+                            continue
+                        
+                        row = df_yf.loc[target_datetime]
+                        open_val = float(row.get('open', 0))
+                        high_val = float(row.get('high', 0))
+                        low_val = float(row.get('low', 0))
+                        close_val = float(row.get('close', 0))
+                        adj_close = float(row.get('adjusted_close', close_val)) if 'adjusted_close' in row else close_val
+                        
+                        # 整合性チェックと修正
+                        if close_val > high_val:
+                            high_val = close_val
+                        elif close_val < low_val:
+                            low_val = close_val
+                        
+                        if open_val > high_val:
+                            high_val = open_val
+                        elif open_val < low_val:
+                            low_val = open_val
+                        
+                        # 調整済み価格を計算
+                        if close_val != 0:
+                            adjustment_factor = adj_close / close_val
+                        else:
+                            adjustment_factor = 1.0
+                        
+                        # Open, High, Lowに調整係数を適用
+                        adjusted_open = open_val * adjustment_factor
+                        adjusted_high = high_val * adjustment_factor
+                        adjusted_low = low_val * adjustment_factor
+                        
+                        # データフレームを作成
+                        df_to_save = pd.DataFrame([{
+                            'open': adjusted_open,
+                            'high': adjusted_high,
+                            'low': adjusted_low,
+                            'close': adj_close,
+                            'volume': int(row.get('volume', 0)),
+                            'adjusted_close': adj_close,
+                            'is_temporary_close': 0
+                        }], index=[target_datetime])
+                        
+                        result = ohlcv_manager.save_ohlcv_data_with_temporary_flag(
+                            symbol=symbol,
+                            df=df_to_save,
+                            timeframe='1d',
+                            source='yahoo',
+                            overwrite=True,
+                            allow_temporary_overwrite_latest=True
+                        )
+                        
+                        if result['updated_count'] > 0 or result['saved_count'] > 0:
+                            success_count += 1
+                            updated_count += result['updated_count'] + result['saved_count']
+                        
+                        # レート制限対策（0.2秒待機）
+                        if i < total_count:
+                            time.sleep(0.2)
+                    
+                    except Exception as e:
+                        error_count += 1
+                        print(f"[強制同期] {symbol}: エラー - {e}")
+                        continue
+                
+                # 結果を表示
+                self.force_sync_status_var.set("完了")
+                self.status_var.set(f"状態: {date_str} の全銘柄を強制同期完了")
+                messagebox.showinfo("完了", f"指定日 {date_str} の全銘柄のデータを更新しました。\n\n"
+                                            f"成功: {success_count}銘柄\n"
+                                            f"エラー: {error_count}銘柄\n"
+                                            f"更新件数: {updated_count}件")
+                
+            except Exception as e:
+                error_msg = str(e)
+                self.force_sync_status_var.set("エラー")
+                self.status_var.set(f"状態: エラー - {error_msg}")
+                messagebox.showerror("エラー", f"全銘柄強制同期中にエラーが発生しました:\n{error_msg}")
+                print(f"[全銘柄強制同期] エラー: {e}")
+            finally:
+                self.force_sync_all_button.config(state="normal")
+                self.force_sync_button.config(state="normal")
+        
+        thread = threading.Thread(target=sync_all_in_thread, daemon=True)
+        thread.start()
+    
+    def on_manual_input_data(self):
+        """手動でデータを入力して修正（yfinanceのデータが間違っている場合用）"""
+        symbol = self.sync_symbol_entry.get().strip()
+        date_str = self.sync_date_entry.get().strip()
+        
+        if not symbol:
+            messagebox.showwarning("警告", "銘柄コードを入力してください。")
+            return
+        
+        if not date_str:
+            messagebox.showwarning("警告", "日付を入力してください。")
+            return
+        
+        # 日付の形式を確認
+        try:
+            from datetime import datetime
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except ValueError:
+            messagebox.showerror("エラー", "日付の形式が正しくありません。\n形式: YYYY-MM-DD (例: 2026-01-13)")
+            return
+        
+        # 手動入力ダイアログを作成
+        dialog = tk.Toplevel(self.parent)
+        dialog.title(f"手動入力 - {symbol} ({date_str})")
+        dialog.geometry("400x350")
+        dialog.transient(self.parent)
+        dialog.grab_set()
+        
+        # 現在のデータを取得して表示
+        from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+        import pandas as pd
+        
+        ohlcv_manager = OHLCVDataManager(self.db_path)
+        df_existing = ohlcv_manager.get_ohlcv_data_with_temporary_flag(
+            symbol=symbol,
+            timeframe='1d',
+            source='yahoo',
+            include_temporary=True
+        )
+        
+        existing_open = ""
+        existing_high = ""
+        existing_low = ""
+        existing_close = ""
+        existing_volume = ""
+        
+        target_datetime = pd.Timestamp(target_date)
+        if not df_existing.empty and target_datetime in df_existing.index:
+            row = df_existing.loc[target_datetime]
+            existing_open = str(row.get('open', ''))
+            existing_high = str(row.get('high', ''))
+            existing_low = str(row.get('low', ''))
+            existing_close = str(row.get('close', ''))
+            existing_volume = str(int(row.get('volume', 0)))
+        
+        # 入力フィールド
+        main_frame = ttk.Frame(dialog, padding=20)
+        main_frame.pack(fill="both", expand=True)
+        
+        # タイトル部分（packを使用）
+        title_frame = ttk.Frame(main_frame)
+        title_frame.pack(fill="x", pady=(0, 15))
+        ttk.Label(title_frame, text=f"銘柄: {symbol}  日付: {date_str}", font=("", 10, "bold")).pack()
+        ttk.Label(title_frame, text="※yfinanceのデータが間違っている場合に使用", font=("", 8), foreground="gray").pack(pady=(5, 0))
+        
+        # 入力フィールド部分（gridを使用）
+        input_frame = ttk.Frame(main_frame)
+        input_frame.pack(fill="both", expand=True, pady=(0, 10))
+        
+        # Open
+        ttk.Label(input_frame, text="始値 (Open):").grid(row=0, column=0, sticky="w", pady=5, padx=5)
+        open_entry = ttk.Entry(input_frame, width=15)
+        open_entry.insert(0, existing_open)
+        open_entry.grid(row=0, column=1, pady=5, padx=10)
+        
+        # High
+        ttk.Label(input_frame, text="高値 (High):").grid(row=1, column=0, sticky="w", pady=5, padx=5)
+        high_entry = ttk.Entry(input_frame, width=15)
+        high_entry.insert(0, existing_high)
+        high_entry.grid(row=1, column=1, pady=5, padx=10)
+        
+        # Low
+        ttk.Label(input_frame, text="安値 (Low):").grid(row=2, column=0, sticky="w", pady=5, padx=5)
+        low_entry = ttk.Entry(input_frame, width=15)
+        low_entry.insert(0, existing_low)
+        low_entry.grid(row=2, column=1, pady=5, padx=10)
+        
+        # Close
+        ttk.Label(input_frame, text="終値 (Close):").grid(row=3, column=0, sticky="w", pady=5, padx=5)
+        close_entry = ttk.Entry(input_frame, width=15)
+        close_entry.insert(0, existing_close)
+        close_entry.grid(row=3, column=1, pady=5, padx=10)
+        
+        # Volume
+        ttk.Label(input_frame, text="出来高 (Volume):").grid(row=4, column=0, sticky="w", pady=5, padx=5)
+        volume_entry = ttk.Entry(input_frame, width=15)
+        volume_entry.insert(0, existing_volume)
+        volume_entry.grid(row=4, column=1, pady=5, padx=10)
+        
+        def save_data():
+            try:
+                open_val = float(open_entry.get())
+                high_val = float(high_entry.get())
+                low_val = float(low_entry.get())
+                close_val = float(close_entry.get())
+                volume_val = int(float(volume_entry.get()))
+                
+                # 整合性チェック
+                if close_val > high_val or close_val < low_val:
+                    messagebox.showerror("エラー", f"データの整合性が取れていません。\n終値({close_val})は高値({high_val})と安値({low_val})の間である必要があります。")
+                    return
+                
+                if open_val > high_val or open_val < low_val:
+                    messagebox.showerror("エラー", f"データの整合性が取れていません。\n始値({open_val})は高値({high_val})と安値({low_val})の間である必要があります。")
+                    return
+                
+                # 調整済み価格は終値と同じとする（手動入力の場合）
+                adjusted_close = close_val
+                
+                # データフレームを作成
+                df_to_save = pd.DataFrame([{
+                    'open': open_val,
+                    'high': high_val,
+                    'low': low_val,
+                    'close': close_val,
+                    'volume': volume_val,
+                    'adjusted_close': adjusted_close,
+                    'is_temporary_close': 0
+                }], index=[target_datetime])
+                
+                result = ohlcv_manager.save_ohlcv_data_with_temporary_flag(
+                    symbol=symbol,
+                    df=df_to_save,
+                    timeframe='1d',
+                    source='yahoo',
+                    overwrite=True,
+                    allow_temporary_overwrite_latest=True
+                )
+                
+                if result['updated_count'] > 0 or result['saved_count'] > 0:
+                    messagebox.showinfo("完了", f"銘柄 {symbol} の {date_str} のデータを更新しました。\n\n"
+                                                f"更新内容:\n"
+                                                f"  始値: {open_val:.2f}\n"
+                                                f"  高値: {high_val:.2f}\n"
+                                                f"  安値: {low_val:.2f}\n"
+                                                f"  終値: {close_val:.2f}\n"
+                                                f"  出来高: {volume_val:,}")
+                    dialog.destroy()
+                else:
+                    messagebox.showinfo("情報", "データに変更はありませんでした。")
+                    dialog.destroy()
+            
+            except ValueError as e:
+                messagebox.showerror("エラー", f"数値の形式が正しくありません。\n{e}")
+            except Exception as e:
+                messagebox.showerror("エラー", f"データ保存中にエラーが発生しました:\n{e}")
+        
+        # ボタン部分（packを使用）
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=10)
+        
+        ttk.Button(button_frame, text="保存", command=save_data, width=15).pack(side="left", padx=5)
+        ttk.Button(button_frame, text="キャンセル", command=dialog.destroy, width=15).pack(side="left", padx=5)
+
+    def on_update_adjusted_prices(self):
+        """調整済み価格を一括更新"""
+        # 確認ダイアログ
+        result = messagebox.askyesno(
+            "確認",
+            "既存データの調整済み価格を一括更新します。\n"
+            "この処理には時間がかかる場合があります（400銘柄の場合、10分以上かかる可能性があります）。\n"
+            "データベースのバックアップを推奨します。\n\n"
+            "続行しますか？",
+            parent=self.parent
+        )
+        
+        if not result:
+            return
+        
+        # 別スレッドで実行
+        def update_in_thread():
+            try:
+                from src.data_collector.ohlcv_data_manager import OHLCVDataManager
+                
+                self.adjusted_prices_status_var.set("更新中...")
+                self.update_adjusted_prices_button.config(state="disabled")
+                
+                ohlcv_manager = OHLCVDataManager(self.db_path)
+                
+                def progress_callback(symbol, current, total):
+                    self.adjusted_prices_status_var.set(f"処理中: {symbol} ({current}/{total})")
+                
+                result = ohlcv_manager.update_existing_adjusted_prices(
+                    symbol=None,  # 全銘柄
+                    use_latest_factor=True,
+                    progress_callback=progress_callback
+                )
+                
+                # 結果を表示
+                message = (
+                    f"更新完了\n\n"
+                    f"更新件数: {result['updated_count']:,}件\n"
+                    f"失敗件数: {result['failed_count']}件\n"
+                    f"処理銘柄数: {len(result['symbols_processed'])}銘柄\n"
+                    f"失敗銘柄数: {len(result['symbols_failed'])}銘柄"
+                )
+                
+                if result['symbols_failed']:
+                    message += f"\n\n失敗した銘柄:\n" + ", ".join(result['symbols_failed'][:10])
+                    if len(result['symbols_failed']) > 10:
+                        message += f" ... (他{len(result['symbols_failed']) - 10}銘柄)"
+                
+                self.adjusted_prices_status_var.set("更新完了")
+                messagebox.showinfo("更新完了", message, parent=self.parent)
+                
+            except Exception as e:
+                import traceback
+                error_detail = traceback.format_exc()
+                print(f"[ERROR] 調整済み価格更新エラー: {e}")
+                print(f"[ERROR] 詳細: {error_detail}")
+                self.adjusted_prices_status_var.set("エラー発生")
+                messagebox.showerror(
+                    "エラー",
+                    f"調整済み価格更新でエラーが発生しました:\n{e}\n\n詳細はコンソールを確認してください。",
+                    parent=self.parent
+                )
+            finally:
+                self.update_adjusted_prices_button.config(state="normal")
+                self.adjusted_prices_status_var.set("")
+        
+        thread = threading.Thread(target=update_in_thread, daemon=True)
+        thread.start()
 

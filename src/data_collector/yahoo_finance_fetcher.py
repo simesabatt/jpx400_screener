@@ -70,7 +70,8 @@ class YahooFinanceFetcher:
         
         try:
             ticker = yf.Ticker(ticker_symbol)
-            df = ticker.history(period=period, interval=interval)
+            # 調整済み価格と未調整価格の両方を取得
+            df = ticker.history(period=period, interval=interval, auto_adjust=False, actions=True)
             
             if df.empty:
                 print(f"[Yahoo Finance] データが見つかりませんでした: {symbol}")
@@ -79,9 +80,17 @@ class YahooFinanceFetcher:
             # 列名を小文字に統一
             df.columns = [col.lower() for col in df.columns]
             
-            # 必要な列のみ抽出
+            # 必要な列を抽出（adjusted closeが存在する場合は含める）
             required_cols = ['open', 'high', 'low', 'close', 'volume']
-            df = df[required_cols]
+            if 'adj close' in df.columns:
+                required_cols.append('adj close')
+            # 存在する列のみ抽出
+            available_cols = [col for col in required_cols if col in df.columns]
+            df = df[available_cols]
+            
+            # 'adj close'を'adjusted_close'にリネーム（統一性のため）
+            if 'adj close' in df.columns:
+                df = df.rename(columns={'adj close': 'adjusted_close'})
             
             # タイムゾーン情報を削除（ナイーブにする）
             if df.index.tz is not None:

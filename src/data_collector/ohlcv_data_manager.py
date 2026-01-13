@@ -74,6 +74,17 @@ class OHLCVDataManager:
                 # 既に存在する場合はスキップ
                 pass
             
+            # マイグレーション: adjusted_close列を追加（既存テーブル用）
+            try:
+                cursor.execute('ALTER TABLE ohlcv_data ADD COLUMN adjusted_close REAL')
+                print("[OHLCVDataManager] adjusted_close列を追加しました")
+                # 既存データの初期化（後で一括更新される）
+                cursor.execute('UPDATE ohlcv_data SET adjusted_close = close WHERE adjusted_close IS NULL')
+                print("[OHLCVDataManager] 既存データのadjusted_closeを初期化しました")
+            except sqlite3.OperationalError:
+                # 既に存在する場合はスキップ
+                pass
+            
             # インデックスを作成（高速検索用）
             cursor.execute('''
                 CREATE INDEX IF NOT EXISTS idx_ohlcv_symbol_datetime 
@@ -184,6 +195,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row['high'] if 'high' in row.index else 0.0)
                         low_val = safe_float(row['low'] if 'low' in row.index else 0.0)
                         close_val = safe_float(row['close'] if 'close' in row.index else 0.0)
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row['adjusted_close'] if 'adjusted_close' in row.index else close_val)
                     except (KeyError, AttributeError):
                         # フォールバック: get()メソッドを使用
                         volume_raw = row.get('volume', 0)
@@ -196,6 +209,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row.get('high', 0.0))
                         low_val = safe_float(row.get('low', 0.0))
                         close_val = safe_float(row.get('close', 0.0))
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row.get('adjusted_close', close_val))
                     
                     # 既存データをチェック
                     cursor.execute('''
@@ -218,7 +233,7 @@ class OHLCVDataManager:
                         # 既存データを更新
                         cursor.execute('''
                             UPDATE ohlcv_data
-                            SET open = ?, high = ?, low = ?, close = ?, volume = ?, created_at = ?
+                            SET open = ?, high = ?, low = ?, close = ?, volume = ?, adjusted_close = ?, created_at = ?
                             WHERE symbol = ? AND datetime = ? AND timeframe = ? AND source = ?
                         ''', (
                             open_val,
@@ -226,6 +241,7 @@ class OHLCVDataManager:
                             low_val,
                             close_val,
                             volume_val,
+                            adjusted_close_val,
                             datetime.now().isoformat(),
                             symbol,
                             dt.isoformat(),
@@ -237,8 +253,8 @@ class OHLCVDataManager:
                         # 新規データを挿入
                         cursor.execute('''
                             INSERT INTO ohlcv_data
-                            (symbol, datetime, timeframe, open, high, low, close, volume, source, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (symbol, datetime, timeframe, open, high, low, close, volume, adjusted_close, source, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             symbol,
                             dt.isoformat(),
@@ -248,6 +264,7 @@ class OHLCVDataManager:
                             low_val,
                             close_val,
                             volume_val,
+                            adjusted_close_val,
                             source,
                             datetime.now().isoformat()
                         ))
@@ -358,6 +375,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row['high'] if 'high' in row.index else 0.0)
                         low_val = safe_float(row['low'] if 'low' in row.index else 0.0)
                         close_val = safe_float(row['close'] if 'close' in row.index else 0.0)
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row['adjusted_close'] if 'adjusted_close' in row.index else close_val)
                     except (KeyError, AttributeError):
                         # フォールバック: get()メソッドを使用
                         volume_raw = row.get('volume', 0)
@@ -370,6 +389,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row.get('high', 0.0))
                         low_val = safe_float(row.get('low', 0.0))
                         close_val = safe_float(row.get('close', 0.0))
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row.get('adjusted_close', close_val))
                     
                     # 既存データをチェック
                     cursor.execute('''
@@ -392,7 +413,7 @@ class OHLCVDataManager:
                         # 既存データを更新
                         cursor.execute('''
                             UPDATE ohlcv_data
-                            SET open = ?, high = ?, low = ?, close = ?, volume = ?, created_at = ?
+                            SET open = ?, high = ?, low = ?, close = ?, volume = ?, adjusted_close = ?, created_at = ?
                             WHERE symbol = ? AND datetime = ? AND timeframe = ? AND source = ?
                         ''', (
                             open_val,
@@ -400,6 +421,7 @@ class OHLCVDataManager:
                             low_val,
                             close_val,
                             volume_val,
+                            adjusted_close_val,
                             datetime.now().isoformat(),
                             symbol,
                             dt.isoformat(),
@@ -411,8 +433,8 @@ class OHLCVDataManager:
                         # 新規データを挿入
                         cursor.execute('''
                             INSERT INTO ohlcv_data
-                            (symbol, datetime, timeframe, open, high, low, close, volume, source, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (symbol, datetime, timeframe, open, high, low, close, volume, adjusted_close, source, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             symbol,
                             dt.isoformat(),
@@ -422,6 +444,7 @@ class OHLCVDataManager:
                             low_val,
                             close_val,
                             volume_val,
+                            adjusted_close_val,
                             source,
                             datetime.now().isoformat()
                         ))
@@ -466,7 +489,7 @@ class OHLCVDataManager:
         """
         with sqlite3.connect(self.db_path) as conn:
             query = '''
-                SELECT datetime, open, high, low, close, volume
+                SELECT datetime, open, high, low, close, volume, adjusted_close
                 FROM ohlcv_data
                 WHERE symbol = ? AND timeframe = ?
             '''
@@ -507,7 +530,7 @@ class OHLCVDataManager:
             # 重複インデックスを削除
             df = df[~df.index.duplicated(keep='first')]
             
-            # 欠損値を削除
+            # 欠損値を削除（adjusted_closeは除外）
             df = df.dropna(subset=['open', 'high', 'low', 'close', 'volume'])
             
             return df
@@ -622,6 +645,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row['high'] if 'high' in row.index else 0.0)
                         low_val = safe_float(row['low'] if 'low' in row.index else 0.0)
                         close_val = safe_float(row['close'] if 'close' in row.index else 0.0)
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row['adjusted_close'] if 'adjusted_close' in row.index else close_val)
                     except (KeyError, AttributeError):
                         # フォールバック: get()メソッドを使用
                         volume_raw = row.get('volume', 0)
@@ -634,6 +659,8 @@ class OHLCVDataManager:
                         high_val = safe_float(row.get('high', 0.0))
                         low_val = safe_float(row.get('low', 0.0))
                         close_val = safe_float(row.get('close', 0.0))
+                        # 調整済み価格を取得（存在する場合、デフォルトはclose）
+                        adjusted_close_val = safe_float(row.get('adjusted_close', close_val))
                     
                     # 仮終値フラグを取得（デフォルトは0=正式）
                     is_temporary = safe_int(row.get('is_temporary_close', 0))
@@ -673,7 +700,7 @@ class OHLCVDataManager:
                                 cursor.execute('''
                                     UPDATE ohlcv_data
                                     SET open = ?, high = ?, low = ?, close = ?, volume = ?,
-                                        is_temporary_close = 1, updated_at = ?
+                                        adjusted_close = ?, is_temporary_close = 1, updated_at = ?
                                     WHERE id = ?
                                 ''', (
                                     open_val,
@@ -681,6 +708,7 @@ class OHLCVDataManager:
                                     low_val,
                                     close_val,
                                     volume_val,
+                                    adjusted_close_val,
                                     datetime.now().isoformat(),
                                     existing_id
                                 ))
@@ -695,7 +723,7 @@ class OHLCVDataManager:
                             cursor.execute('''
                                 UPDATE ohlcv_data
                                 SET open = ?, high = ?, low = ?, close = ?, volume = ?,
-                                    is_temporary_close = 0, updated_at = ?
+                                    adjusted_close = ?, is_temporary_close = 0, updated_at = ?
                                 WHERE id = ?
                             ''', (
                                 open_val,
@@ -703,6 +731,7 @@ class OHLCVDataManager:
                                 low_val,
                                 close_val,
                                 volume_val,
+                                adjusted_close_val,
                                 datetime.now().isoformat(),
                                 existing_id
                             ))
@@ -714,7 +743,7 @@ class OHLCVDataManager:
                             cursor.execute('''
                                 UPDATE ohlcv_data
                                 SET open = ?, high = ?, low = ?, close = ?, volume = ?,
-                                    updated_at = ?
+                                    adjusted_close = ?, updated_at = ?
                                 WHERE id = ?
                             ''', (
                                 open_val,
@@ -722,6 +751,7 @@ class OHLCVDataManager:
                                 low_val,
                                 close_val,
                                 volume_val,
+                                adjusted_close_val,
                                 datetime.now().isoformat(),
                                 existing_id
                             ))
@@ -734,7 +764,7 @@ class OHLCVDataManager:
                             cursor.execute('''
                                 UPDATE ohlcv_data
                                 SET open = ?, high = ?, low = ?, close = ?, volume = ?,
-                                    updated_at = ?
+                                    adjusted_close = ?, updated_at = ?
                                 WHERE id = ?
                             ''', (
                                 open_val,
@@ -742,6 +772,7 @@ class OHLCVDataManager:
                                 low_val,
                                 close_val,
                                 volume_val,
+                                adjusted_close_val,
                                 datetime.now().isoformat(),
                                 existing_id
                             ))
@@ -753,8 +784,8 @@ class OHLCVDataManager:
                         # 新規データを挿入
                         cursor.execute('''
                             INSERT INTO ohlcv_data
-                            (symbol, datetime, timeframe, open, high, low, close, volume, source, is_temporary_close, created_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            (symbol, datetime, timeframe, open, high, low, close, volume, adjusted_close, source, is_temporary_close, created_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             symbol,
                             dt.isoformat() if isinstance(dt, pd.Timestamp) else dt,
@@ -764,6 +795,7 @@ class OHLCVDataManager:
                             low_val,
                             close_val,
                             volume_val,
+                            adjusted_close_val,
                             source,
                             is_temporary,
                             datetime.now().isoformat()
@@ -811,7 +843,7 @@ class OHLCVDataManager:
         """
         with sqlite3.connect(self.db_path) as conn:
             query = '''
-                SELECT datetime, open, high, low, close, volume, is_temporary_close
+                SELECT datetime, open, high, low, close, volume, adjusted_close, is_temporary_close
                 FROM ohlcv_data
                 WHERE symbol = ? AND timeframe = ?
             '''
@@ -855,7 +887,7 @@ class OHLCVDataManager:
             # 重複インデックスを削除
             df = df[~df.index.duplicated(keep='first')]
             
-            # 欠損値を削除
+            # 欠損値を削除（adjusted_closeは除外）
             df = df.dropna(subset=['open', 'high', 'low', 'close', 'volume'])
             
             # is_temporary_close列の欠損値を0（正式）で埋める
@@ -1165,4 +1197,229 @@ class OHLCVDataManager:
     def _extract_japanese_name(self, info: dict, symbol: str) -> Optional[str]:
         """Yahoo Financeから日本語名（和名）を取得（SymbolNameManagerに委譲）"""
         return self._symbol_name_manager._extract_japanese_name(info, symbol)
+    
+    def update_existing_adjusted_prices(
+        self,
+        symbol: Optional[str] = None,
+        use_latest_factor: bool = True,
+        progress_callback: Optional[Callable[[str, int, int], None]] = None
+    ) -> Dict:
+        """
+        既存データの調整済み価格を一括更新
+        
+        yfinanceから最新データを取得し、調整係数を計算して既存データに適用します。
+        
+        Args:
+            symbol: 更新する銘柄コード（Noneの場合は全銘柄）
+            use_latest_factor: True=最新の調整係数を使用、False=時系列の調整係数を使用
+            progress_callback: 進捗コールバック関数（symbol, current, total）を受け取る
+        
+        Returns:
+            dict: 更新結果（updated_count, failed_count, symbols_processed等）
+        """
+        import yfinance as yf
+        import time
+        
+        updated_count = 0
+        failed_count = 0
+        symbols_processed = []
+        symbols_failed = []
+        
+        # 更新対象の銘柄リストを取得
+        if symbol:
+            symbols_to_update = [symbol]
+        else:
+            # 全銘柄を取得（日足データがある銘柄のみ）
+            symbols_to_update = self.get_symbol_list(timeframe='1d', source='yahoo')
+        
+        total_symbols = len(symbols_to_update)
+        
+        print(f"[調整済み価格更新] {total_symbols}銘柄の更新を開始します...")
+        
+        for idx, sym in enumerate(symbols_to_update, 1):
+            try:
+                if progress_callback:
+                    progress_callback(sym, idx, total_symbols)
+                
+                print(f"[調整済み価格更新] ({idx}/{total_symbols}) {sym} を処理中...")
+                
+                # yfinanceから最新データを取得（調整済み価格と未調整価格の両方）
+                ticker = yf.Ticker(f"{sym}.T")
+                # 過去2年分を取得して調整係数を計算（より多くのデータを取得）
+                df_yfinance = ticker.history(period="2y", interval="1d", auto_adjust=False, actions=True)
+                
+                if df_yfinance.empty:
+                    print(f"[調整済み価格更新] {sym}: データが見つかりませんでした")
+                    failed_count += 1
+                    symbols_failed.append(sym)
+                    continue
+                
+                # 列名を小文字に統一
+                df_yfinance.columns = [col.lower() for col in df_yfinance.columns]
+                
+                # 調整済み価格が取得できない場合はスキップ
+                if 'adj close' not in df_yfinance.columns:
+                    print(f"[調整済み価格更新] {sym}: 調整済み価格が取得できませんでした")
+                    failed_count += 1
+                    symbols_failed.append(sym)
+                    continue
+                
+                # 調整係数を計算
+                if use_latest_factor:
+                    # 方法1: 最新の調整係数を使用（シンプル）
+                    latest_adj_close = float(df_yfinance['adj close'].iloc[-1])
+                    latest_close = float(df_yfinance['close'].iloc[-1])
+                    if latest_close == 0:
+                        print(f"[調整済み価格更新] {sym}: 最新価格が0のためスキップ")
+                        failed_count += 1
+                        symbols_failed.append(sym)
+                        continue
+                    adjustment_factor = latest_adj_close / latest_close
+                else:
+                    # 方法2: 時系列の調整係数を使用（より正確だが複雑）
+                    # 最新の調整係数を過去データに適用
+                    latest_adj_close = float(df_yfinance['adj close'].iloc[-1])
+                    latest_close = float(df_yfinance['close'].iloc[-1])
+                    if latest_close == 0:
+                        print(f"[調整済み価格更新] {sym}: 最新価格が0のためスキップ")
+                        failed_count += 1
+                        symbols_failed.append(sym)
+                        continue
+                    adjustment_factor = latest_adj_close / latest_close
+                
+                print(f"[調整済み価格更新] {sym}: 調整係数 = {adjustment_factor:.6f}")
+                
+                # yfinanceから取得したデータを使用して、各時点での調整係数を計算
+                # タイムゾーン情報を削除
+                if df_yfinance.index.tz is not None:
+                    df_yfinance.index = df_yfinance.index.tz_localize(None)
+                
+                # データベース内の既存データを更新
+                # yfinanceから取得したデータを使用して、各時点での調整係数を計算
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # データベース内の全データを取得
+                    cursor.execute('''
+                        SELECT datetime, open, high, low, close, adjusted_close
+                        FROM ohlcv_data
+                        WHERE symbol = ? AND timeframe = '1d' AND source = 'yahoo'
+                        ORDER BY datetime
+                    ''', (sym,))
+                    
+                    rows = cursor.fetchall()
+                    rows_updated = 0
+                    
+                    # yfinanceのデータを辞書に変換（高速検索用）
+                    # yfinanceのOpen, High, Lowは未調整価格、Adj Closeは調整済み価格
+                    # 各時点での調整係数を計算して、Open, High, Lowに適用する必要がある
+                    yf_data_dict = {}
+                    for dt, row in df_yfinance.iterrows():
+                        dt_str = dt.strftime('%Y-%m-%dT00:00:00')
+                        close_val = float(row['close'])
+                        adj_close_val = float(row['adj close']) if 'adj close' in row else close_val
+                        
+                        # 各時点での調整係数を計算
+                        if close_val != 0:
+                            adjustment_factor = adj_close_val / close_val
+                        else:
+                            adjustment_factor = 1.0
+                        
+                        # Open, High, Lowに調整係数を適用
+                        # yfinanceのCloseは未調整価格、Adj Closeは調整済み価格
+                        # データベースには調整済み価格を保存するため、closeもadj_closeを使用
+                        yf_data_dict[dt_str] = {
+                            'open': float(row['open']) * adjustment_factor,
+                            'high': float(row['high']) * adjustment_factor,
+                            'low': float(row['low']) * adjustment_factor,
+                            'close': adj_close_val,  # 調整済み価格を使用
+                            'adj_close': adj_close_val
+                        }
+                    
+                    # 最新の調整係数を計算（yfinanceから取得した最新データを使用）
+                    latest_adjustment_factor = None
+                    if len(yf_data_dict) > 0:
+                        latest_yf_data = list(yf_data_dict.values())[-1]
+                        if latest_yf_data['close'] != 0:
+                            latest_adjustment_factor = latest_yf_data['adj_close'] / latest_yf_data['close']
+                    
+                    # yfinanceから取得したデータで、データベースの全データを更新
+                    # yfinanceにデータがある場合はそのまま使用、ない場合は最新の調整係数を使用
+                    for row in rows:
+                        dt_str, open_val, high_val, low_val, close_val, adj_close_val = row
+                        if close_val == 0:
+                            continue
+                        
+                        # yfinanceから取得したデータを使用
+                        if dt_str in yf_data_dict:
+                            yf_data = yf_data_dict[dt_str]
+                            # yfinanceのデータを使用（既に調整済み価格）
+                            adjusted_open = yf_data['open']
+                            adjusted_high = yf_data['high']
+                            adjusted_low = yf_data['low']
+                            adjusted_close = yf_data['adj_close']
+                            new_close = yf_data['close']
+                        else:
+                            # yfinanceにデータがない場合は、最新の調整係数を使用して更新
+                            if latest_adjustment_factor is not None:
+                                # 最新の調整係数を使用して、open, high, low, close, adjusted_closeすべてを更新
+                                adjusted_open = open_val * latest_adjustment_factor
+                                adjusted_high = high_val * latest_adjustment_factor
+                                adjusted_low = low_val * latest_adjustment_factor
+                                adjusted_close = close_val * latest_adjustment_factor
+                                new_close = close_val
+                            else:
+                                # 調整係数が計算できない場合は、既存のadjusted_closeを使用
+                                if adj_close_val is not None and adj_close_val != 0:
+                                    # 既存のadjusted_closeから調整係数を計算
+                                    row_adjustment_factor = adj_close_val / close_val if close_val != 0 else 1.0
+                                    adjusted_open = open_val * row_adjustment_factor
+                                    adjusted_high = high_val * row_adjustment_factor
+                                    adjusted_low = low_val * row_adjustment_factor
+                                    adjusted_close = adj_close_val
+                                    new_close = close_val
+                                else:
+                                    # adjusted_closeがない場合はスキップ
+                                    continue
+                        
+                        # データベースを更新（open, high, low, close, adjusted_closeすべて）
+                        cursor.execute('''
+                            UPDATE ohlcv_data
+                            SET open = ?, high = ?, low = ?, close = ?, adjusted_close = ?
+                            WHERE symbol = ? AND datetime = ? AND timeframe = '1d' AND source = 'yahoo'
+                        ''', (adjusted_open, adjusted_high, adjusted_low, new_close, adjusted_close, sym, dt_str))
+                        
+                        if cursor.rowcount > 0:
+                            rows_updated += 1
+                    
+                    conn.commit()
+                    
+                    if rows_updated > 0:
+                        updated_count += rows_updated
+                        symbols_processed.append(sym)
+                        print(f"[調整済み価格更新] {sym}: {rows_updated}件のデータを更新しました（open, high, low, close, adjusted_close）")
+                    else:
+                        print(f"[調整済み価格更新] {sym}: 更新対象のデータがありませんでした")
+                
+                # レート制限対策（0.2秒待機）
+                time.sleep(0.2)
+                
+            except Exception as e:
+                print(f"[調整済み価格更新] {sym}: エラーが発生しました - {e}")
+                failed_count += 1
+                symbols_failed.append(sym)
+                # エラーが発生しても次の銘柄を処理
+                continue
+        
+        result = {
+            'updated_count': updated_count,
+            'failed_count': failed_count,
+            'symbols_processed': symbols_processed,
+            'symbols_failed': symbols_failed,
+            'total_symbols': total_symbols
+        }
+        
+        print(f"[調整済み価格更新] 完了: {updated_count}件更新, {failed_count}件失敗")
+        
+        return result
 
