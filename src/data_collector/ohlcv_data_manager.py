@@ -19,6 +19,10 @@ import os
 class OHLCVDataManager:
     """OHLCVデータ管理クラス（共通機能）"""
     
+    # SQLite接続のタイムアウト設定（秒）
+    # データベースがロックされている場合、この時間だけ待機する
+    DB_TIMEOUT = 30.0
+    
     def __init__(self, db_path: str):
         """
         初期化
@@ -32,6 +36,28 @@ class OHLCVDataManager:
         from src.data_collector.symbol_name_manager import SymbolNameManager
         self._symbol_name_manager = SymbolNameManager(db_path)
     
+    def _get_connection(self, timeout: float = None):
+        """
+        データベース接続を取得（タイムアウト設定付き）
+        
+        Args:
+            timeout: タイムアウト時間（秒）。Noneの場合はDB_TIMEOUTを使用
+        
+        Returns:
+            sqlite3.Connection: データベース接続
+        """
+        if timeout is None:
+            timeout = self.DB_TIMEOUT
+        
+        conn = sqlite3.connect(self.db_path, timeout=timeout)
+        # WALモードを有効化（読み取りと書き込みの同時実行を可能にする）
+        try:
+            conn.execute('PRAGMA journal_mode=WAL')
+        except sqlite3.OperationalError:
+            # WALモードが使用できない場合（例：ネットワークドライブ）はスキップ
+            pass
+        return conn
+    
     def _ensure_table(self):
         """ohlcv_dataテーブルが存在することを確認（なければ作成）"""
         # データベースディレクトリの存在確認
@@ -39,7 +65,7 @@ class OHLCVDataManager:
         if db_dir and not os.path.exists(db_dir):
             os.makedirs(db_dir, exist_ok=True)
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS ohlcv_data (
@@ -129,7 +155,7 @@ class OHLCVDataManager:
         skipped_count = 0
         updated_count = 0
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
             
             for dt, row in df.iterrows():
@@ -309,7 +335,7 @@ class OHLCVDataManager:
         skipped_count = 0
         updated_count = 0
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
             
             for dt, row in df.iterrows():
@@ -487,7 +513,7 @@ class OHLCVDataManager:
         Returns:
             pd.DataFrame: OHLCVデータ（インデックスがdatetime）
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             query = '''
                 SELECT datetime, open, high, low, close, volume, adjusted_close
                 FROM ohlcv_data
@@ -579,7 +605,7 @@ class OHLCVDataManager:
             except (ValueError, TypeError):
                 latest_date = None
         
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
             
             for dt, row in df.iterrows():
@@ -841,7 +867,7 @@ class OHLCVDataManager:
         Returns:
             pd.DataFrame: OHLCVデータ（is_temporary_close列を含む）
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             query = '''
                 SELECT datetime, open, high, low, close, volume, adjusted_close, is_temporary_close
                 FROM ohlcv_data
@@ -996,7 +1022,7 @@ class OHLCVDataManager:
         Returns:
             dict: 統計情報（件数、期間など）
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.cursor()
             
             # サブクエリ用の条件を構築
@@ -1054,7 +1080,7 @@ class OHLCVDataManager:
                 - first_date: 最初のデータ日時
                 - last_date: 最後のデータ日時
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             # サブクエリで最新の更新時刻を取得
             query = '''
                 SELECT 
@@ -1117,7 +1143,7 @@ class OHLCVDataManager:
         Returns:
             List[str]: 銘柄コードのリスト（ソート済み）
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             query = 'SELECT DISTINCT symbol FROM ohlcv_data WHERE 1=1'
             params = []
             
@@ -1296,7 +1322,7 @@ class OHLCVDataManager:
                 
                 # データベース内の既存データを更新
                 # yfinanceから取得したデータを使用して、各時点での調整係数を計算
-                with sqlite3.connect(self.db_path) as conn:
+                with self._get_connection() as conn:
                     cursor = conn.cursor()
                     
                     # データベース内の全データを取得

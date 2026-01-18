@@ -38,15 +38,35 @@ class AutoTaskManager:
             
             # JPXデータ収集: 15:00と20:00に実行
             if jpx_collect_callback:
+                def jpx_collect_wrapper_15():
+                    """15時のJPXデータ収集ラッパー（ログ付き）"""
+                    print(f"[自動実行] スケジューラーから15時のJPXデータ収集コールバックが呼び出されました（時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）")
+                    try:
+                        jpx_collect_callback("15")
+                    except Exception as e:
+                        print(f"[自動実行エラー] 15時のJPXデータ収集コールバックで例外が発生: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                def jpx_collect_wrapper_20():
+                    """20時のJPXデータ収集ラッパー（ログ付き）"""
+                    print(f"[自動実行] スケジューラーから20時のJPXデータ収集コールバックが呼び出されました（時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）")
+                    try:
+                        jpx_collect_callback("20")
+                    except Exception as e:
+                        print(f"[自動実行エラー] 20時のJPXデータ収集コールバックで例外が発生: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
                 self.scheduler.add_job(
-                    lambda: jpx_collect_callback("15"),
+                    jpx_collect_wrapper_15,
                     CronTrigger(hour=15, minute=0),
                     id='jpx_collect_15',
                     name='JPXデータ収集(15時)',
                     replace_existing=True
                 )
                 self.scheduler.add_job(
-                    lambda: jpx_collect_callback("20"),
+                    jpx_collect_wrapper_20,
                     CronTrigger(hour=20, minute=0),
                     id='jpx_collect_20',
                     name='JPXデータ収集(20時)',

@@ -249,6 +249,8 @@ class DataManagementTab:
     
     def auto_collect_jpx400(self, run_type: str):
         """自動実行：確認なしでJPXデータ収集"""
+        print(f"[自動実行] auto_collect_jpx400が呼び出されました（{run_type}時枠、時刻: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）")
+        print(f"[自動実行] _jpx400_collectingフラグの状態: {self._jpx400_collecting}")
         if self._jpx400_collecting:
             print(f"[自動実行] データ収集は既に実行中です（{run_type}時枠）")
             return
